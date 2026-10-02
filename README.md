@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # SociaLearn — Social Learning, Simplified.
 
 A social-learning hub for college classes — a Google Classroom-style feed,
@@ -225,3 +226,9 @@ socialearn/
 - This goes beyond the original brief's "no authentication needed for this
   prototype" scope — worth flagging to your instructor if the assignment
   expected the simpler localStorage-only version.
+=======
+- ALFEREZ, CHERRY JOY
+- MENDOZA, CHARISSE MAE
+- NIERE, MARILYN
+- TORRES, CARL JAY
+>>>>>>> 30a20ba96bd2660248371e48efdfc388d2919adb
