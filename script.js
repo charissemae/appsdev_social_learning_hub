@@ -303,6 +303,7 @@ function invalidateProfileCache() {
 }
 
 function startDataListeners() {
+<<<<<<< HEAD
   // onAuthStateChange fires more than once for a single sign-in — INITIAL_SESSION
   // and then SIGNED_IN, plus TOKEN_REFRESHED on every refresh. Calling this again
   // re-subscribes a channel that is already live: sb.channel('socialearn') hands
@@ -315,6 +316,8 @@ function startDataListeners() {
   if (realtimeChannel) { sb.removeChannel(realtimeChannel); realtimeChannel = null; }
   if (messageChannel) { sb.removeChannel(messageChannel); messageChannel = null; }
 
+=======
+>>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
   db = emptyDb();
   profilesLoaded = false;
   chatPreviews = {};
@@ -575,6 +578,7 @@ async function syncProfileFromSession(user) {
    await loadCollections(['users']);
    }
 
+<<<<<<< HEAD
 /* Supabase JS names the account id `user.id`. The Firebase version of this app
    called it `uid`, and the render layer still reads `currentUser.uid` in ~45
    places, so normalise it once here — at the only point a session enters the app
@@ -594,12 +598,18 @@ function sessionUser(session) {
   return user;
 }
 
+=======
+>>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
 if (sbEnabled) {
   // Supabase v2 calls this with (event, session) — TWO arguments.
   // The first is the event NAME, so reading .user off it is always
   // undefined, which bounced every sign-in back to the login page.
   sb.auth.onAuthStateChange((event, session) => {
+<<<<<<< HEAD
     const user = sessionUser(session);
+=======
+    const user = session ? session.user : null;
+>>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
     // db.users and profilesLoaded describe whoever is signed in *right now*.
     // The instant that person changes, those rows stop being true: the new
     // account is not in them yet. Read before startDataListeners() resets
@@ -739,6 +749,7 @@ function roleLabel() {
   return r === 'teacher' ? 'Teacher' : r === 'student' ? 'Student' : 'No role yet';
 }
 
+<<<<<<< HEAD
 /* Which of the two side-by-side lists a page shows. A student can never teach —
    the classes insert policy requires is_teacher() — so "Teacher view" is not
    offered to one at all and they are pinned to 'student'.
@@ -758,6 +769,14 @@ function activeView() {
    is what the stored role decides and never the toggle. */
 function isTeaching() { return activeView() === 'teacher'; }
 
+=======
+/* Which list the Classroom page shows. A teacher only ever teaches, so
+   "Teacher view" is not offered to a student at all. */
+function activeView() {
+  return viewMode === 'teacher' && isTeacher() ? 'teacher' : 'student';
+}
+
+>>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
 document.querySelectorAll('.role-switch__opt').forEach(btn => {
   btn.addEventListener('click', () => setViewMode(btn.dataset.role));
 });
@@ -929,6 +948,7 @@ document.getElementById('post-submit').addEventListener('click', async () => {
    --------------------------------------------------------- */
 function renderClassroom() {
   const grid = document.getElementById('class-grid');
+<<<<<<< HEAD
   const teaching = isTeaching();
   // The button follows the stored role, not just the toggle: join_class() refuses
   // a teacher outright, so offering "Join a class" to one would be an action the
@@ -938,11 +958,17 @@ function renderClassroom() {
 
   document.getElementById('create-class-btn').hidden = !teaching;
   document.getElementById('join-class-btn').hidden = teaching || !canJoin;
+=======
+  const teaching = isTeacher();
+  document.getElementById('create-class-btn').hidden = !teaching;
+  document.getElementById('join-class-btn').hidden = teaching;
+>>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
   document.getElementById('classroom-sub').textContent = teaching ? 'Classes you are teaching.' : 'Your enrolled classes, all in one place.';
 
   const list = teaching ? myTaughtClasses() : myJoinedClasses();
 
   if (list.length === 0) {
+<<<<<<< HEAD
     if (teaching) {
       grid.innerHTML = `<div class="empty-state"><p>You haven't created a class yet.</p><button class="btn btn--primary" onclick="document.getElementById('create-class-btn').click()">Create class</button></div>`;
     } else if (canJoin) {
@@ -950,6 +976,11 @@ function renderClassroom() {
     } else {
       grid.innerHTML = `<div class="empty-state"><p>You're not enrolled in any classes. Teachers run their own classes rather than joining one with a code — switch to <b>Teacher view</b> to create one.</p></div>`;
     }
+=======
+    grid.innerHTML = teaching
+      ? `<div class="empty-state"><p>You haven't created a class yet.</p><button class="btn btn--primary" onclick="document.getElementById('create-class-btn').click()">Create class</button></div>`
+      : `<div class="empty-state"><p>You haven't joined any classes yet.</p><button class="btn btn--primary" onclick="document.getElementById('join-class-btn').click()">Join a class</button></div>`;
+>>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
     return;
   }
 
@@ -1091,7 +1122,11 @@ let currentAssignmentId = null;
 let adSelectedFilename = null;
 
 function renderAssignments() {
+<<<<<<< HEAD
   const teaching = isTeaching();
+=======
+  const teaching = isTeacher();
+>>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
   document.getElementById('create-assignment-btn').hidden = !teaching;
 
   const classes = teaching ? myTaughtClasses() : myJoinedClasses();
@@ -1149,7 +1184,11 @@ function openAssignmentDetail(assignmentId) {
   const a = db.assignments.find(x => x.id === assignmentId);
   if (!a) return;
   const cls = findClass(a.class_id);
+<<<<<<< HEAD
   const teaching = isTeaching();
+=======
+  const teaching = isTeacher();
+>>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
 
   document.getElementById('ad-title').textContent = a.title;
   document.getElementById('ad-meta').textContent = `${cls.name} · Due ${formatDeadline(a.deadline)}${a.points ? ' · ' + a.points + ' pts' : ''}`;
