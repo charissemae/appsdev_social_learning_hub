@@ -26,6 +26,8 @@
 --   * signing up                -> handle_user_sync() trigger, SECURITY DEFINER
 --   * choosing Teacher/Student  -> set_my_role() RPC,          SECURITY DEFINER
 --   * joining a class by code   -> join_class() RPC,           SECURITY DEFINER
+
+
 --
 -- That is exactly why the role could be stored but a class could not be created.
 --
@@ -95,12 +97,29 @@ returns boolean language sql stable security definer set search_path = public as
                    and user_id = auth.uid());
 $$;
 
--- These three answer a question about the caller only, and for a signed-out
+-- These four answer a question about the caller only, and for a signed-out
 -- caller auth.uid() is NULL so they can only ever return false. They are still
--- revoked from anon and PUBLIC for consistency with is_teacher() and the RPCs
--- below. GRANT to authenticated is required: a policy expression is evaluated
--- with the calling user's privileges, so revoking from PUBLIC without granting
--- back to authenticated would break every rule below.
+-- revoked from anon and PUBLIC for consistency with the RPCs below. GRANT to
+-- authenticated is required: a policy expression is evaluated with the calling
+-- user's privileges, so revoking from PUBLIC without granting back to
+-- authenticated would break every rule below.
+-- "Did I sign up as a teacher?" Deliberately re-created here rather than
+-- assumed to exist. It comes from supabase-schema.sql and
+-- supabase-role-migration.sql, neither of which a live database can be forced
+-- to re-run (the schema file opens with `drop table ... cascade`), so a
+-- project set up before it was written has no such function. The
+-- "teachers create classes" policy further down calls it by name, and this
+-- whole file is ONE transaction: one missing function would fail that single
+-- statement and roll back every policy here, leaving the database just as
+-- broken while the dashboard reported the migration as run.
+create or replace function public.is_teacher()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles
+                 where id= auth.uid() and role = 'teacher');
+$$;
+
+revoke execute on function public.is_teacher() from public, anon;
+grant  execute on function public.is_teacher() to authenticated;
 revoke execute on function public.is_class_teacher(uuid) from public, anon;
 revoke execute on function public.is_class_member(uuid) from public, anon;
 revoke execute on function public.in_conversation(text) from public, anon;

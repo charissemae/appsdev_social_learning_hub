@@ -554,13 +554,31 @@ $$;
 
 -- Enrol the caller, and make sure the class group chat exists
 -- with both the teacher and the student in it.
+--
+-- Returns SETOF jsonb rather than TABLE(...), and that is load-bearing. The
+-- OUT parameters of a TABLE return are named id, name, section and
+-- teacher_id -- the same names as real columns of conversations -- and plpgsql
+-- resolves an INSERT target list too, so
+--   insert into conversations (id, type, class_id, name)
+-- matched an OUT parameter *and* a column and died with
+-- 42702 "column reference id is ambiguous". Those OUT names cannot simply be
+-- changed: PostgREST derives the JSON keys from them and script.js reads
+-- data[0].name and data[0].already_joined. With no OUT parameters in scope
+-- there is nothing for a column name to be ambiguous with, and
+-- jsonb_build_object() puts the same keys back so the client is unaffected.
+--
+-- Every local below is prefixed for the same reason, and the class lookup
+-- qualifies each column instead of selecting `*`.
 create or replace function join_class(p_code text)
-returns table (id uuid, name text, section text, teacher_id uuid, already_joined boolean)
+returns setof jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  v_class classes;
-  v_already boolean;
-  v_conv_id text;
+  v_id         uuid;
+  v_name       text;
+  v_section    text;
+  v_teacher_id uuid;
+  v_already    boolean;
+  v_conv_id    text;
 begin
   if auth.uid() is null then
     raise exception 'not signed in' using errcode = '42501';
@@ -574,35 +592,42 @@ begin
       using errcode = '42501';
   end if;
 
-  select * into v_class from classes
-  where upper(code) = upper(trim(p_code));
+  select c.id, c.name, c.section, c.teacher_id
+    into v_id, v_name, v_section, v_teacher_id
+    from classes c
+   where upper(c.code) = upper(trim(p_code));
 
-  if v_class.id is null then
+  if v_id is null then
     raise exception 'no class with that code' using errcode = 'P0002';
   end if;
 
   select exists (select 1 from class_members
-                 where class_id = v_class.id and student_id = auth.uid())
+                 where class_id = v_id and student_id = auth.uid())
     into v_already;
 
   if not v_already then
     insert into class_members (class_id, student_id)
-    values (v_class.id, auth.uid())
+    values (v_id, auth.uid())
     on conflict do nothing;
   end if;
 
-  v_conv_id := 'group-' || v_class.id;
+  v_conv_id := 'group-' || v_id;
 
   insert into conversations (id, type, class_id, name)
-  values (v_conv_id, 'group', v_class.id, v_class.name || ' — ' || v_class.section)
-  on conflict (id) do nothing;
+  values (v_conv_id, 'group', v_id, v_name || ' - ' || v_section)
+  on conflict do nothing;
 
   insert into conversation_participants (conversation_id, user_id)
-  values (v_conv_id, v_class.teacher_id), (v_conv_id, auth.uid())
+  values (v_conv_id, v_teacher_id), (v_conv_id, auth.uid())
   on conflict do nothing;
 
   return query
-    select v_class.id, v_class.name, v_class.section, v_class.teacher_id, v_already;
+    select jsonb_build_object(
+      'id',             v_id,
+      'name',           v_name,
+      'section',        v_section,
+      'teacher_id',     v_teacher_id,
+      'already_joined', v_already);
 end;
 $$;
 

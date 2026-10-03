@@ -303,7 +303,6 @@ function invalidateProfileCache() {
 }
 
 function startDataListeners() {
-<<<<<<< HEAD
   // onAuthStateChange fires more than once for a single sign-in — INITIAL_SESSION
   // and then SIGNED_IN, plus TOKEN_REFRESHED on every refresh. Calling this again
   // re-subscribes a channel that is already live: sb.channel('socialearn') hands
@@ -316,8 +315,6 @@ function startDataListeners() {
   if (realtimeChannel) { sb.removeChannel(realtimeChannel); realtimeChannel = null; }
   if (messageChannel) { sb.removeChannel(messageChannel); messageChannel = null; }
 
-=======
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
   db = emptyDb();
   profilesLoaded = false;
   chatPreviews = {};
@@ -393,7 +390,12 @@ function setAuthMode(mode) {
     ? `Already have an account? <button type="button" id="auth-toggle-btn">Sign in</button>`
     : `Don't have an account? <button type="button" id="auth-toggle-btn">Create one</button>`;
   document.getElementById('auth-toggle-btn').addEventListener('click', () => setAuthMode(isSignup ? 'signin' : 'signup'));
-  document.getElementById('auth-error').hidden = true;
+  // Clearing the last form error is the point of this line — but not when the
+  // one on screen is the standing "Supabase is not configured" notice, which
+  // is set once at boot and never goes away on its own. Without the guard the
+  // initial setAuthMode('signin') at the end of this file hid it again
+  // immediately, leaving an inert login form and no reason why.
+  if (!authConfigError) document.getElementById('auth-error').hidden = true;
 }
 
 if (document.getElementById('auth-toggle-btn')) {
@@ -446,11 +448,10 @@ document.getElementById('auth-submit-btn').addEventListener('click', async () =>
       if (!name) {
         errorEl.textContent = 'Please enter your full name.'; errorEl.hidden = false; btn.disabled = false; return;
       }
-      // These metadata fields are read by the handle_user_sync()
-      // trigger to build the profile row on sign-up. `role` comes
-      // from the Teacher/Student picker and is stored server-side,
-      // where it can never be changed afterwards. Because it travels
-      // with the sign-up, the app never has to ask again.
+      // The name and role travel as sign-up metadata, which the
+      // handle_user_sync() trigger reads to build the profile row. The role is
+      // then written again by storeRoleAfterSignUp() below, so nothing here
+      // depends on that metadata arriving.
       const { error } = await sb.auth.signUp({
         email,
         password,
@@ -470,6 +471,7 @@ document.getElementById('auth-submit-btn').addEventListener('click', async () =>
         btn.disabled = false;
         return;
       }
+      await storeRoleAfterSignUp(signupRole, name, newSession.user.id);
     } else {
       const { error } = await sb.auth.signInWithPassword({ email, password });
       if (error) throw error;
@@ -480,6 +482,47 @@ document.getElementById('auth-submit-btn').addEventListener('click', async () =>
   }
   btn.disabled = false;
 });
+
+/* Writes the role picked on the sign-up form through set_my_role(), rather than
+   leaving it to ride along as sign-up metadata for handle_user_sync() to find.
+
+   That metadata does arrive today — checked against the live project — so this
+   is belt and braces, not a repair. It is here because the failure it removes
+   is silent and total: if the role ever fails to travel, profiles.role stays
+   NULL, the "teachers create classes" policy refuses every insert, and the
+   account can neither create a class nor fix itself unless the role prompt
+   happens to appear. One extra call removes that whole class of dead end.
+
+   set_my_role() is the one call that writes the role deliberately, and it is
+   already what the post-Google prompt uses. It is one-shot by design, so the
+   common case — metadata worked and the trigger got there first — answers
+   "you already chose the teacher role". That is agreement, not failure, and is
+   swallowed the same way writeRole() swallows it. */
+async function storeRoleAfterSignUp(choice, name, uid) {
+  const { error } = await sb.rpc('set_my_role', { p_role: choice });
+  if (error && !isAlreadyChosen(error)) throw error;
+
+  // The typed name is lost for the same reason the role would be, and the
+  // trigger's fallback leaves the email local part sitting in its place. Only
+  // overwrite while it is still that fallback, so this can never clobber a real
+  // name supplied by a Google sign-in.
+  if (name && uid) {
+    const { data: prof } = await sb.from('profiles').select('name').eq('id', uid).maybeSingle();
+    const fallback = ((currentUser && currentUser.email) || '').split('@')[0];
+    if (prof && (!prof.name || prof.name === fallback)) {
+      const { error: nameErr } = await sb.from('profiles')
+        .update({ name, initials: initialsFromName(name) }).eq('id', uid);
+      if (nameErr) console.warn('SociaLearn: could not save your name', nameErr.message);
+    }
+  }
+
+  // The role is in Postgres now, but db.users is a mirror that was read before
+  // this write landed. Drop it and read it again, or the header keeps saying
+  // "No role yet" and the role prompt keeps reopening over an account that has
+  // already answered.
+  invalidateProfileCache();
+  await loadCollections(['users']);
+}
 
 /* Google sign-in bounces the whole page out to accounts.google.com
    and back, so it needs a real http(s) origin. Opened as a
@@ -513,8 +556,14 @@ document.getElementById('auth-google-btn').addEventListener('click', async () =>
   }
 });
 
+/* Set once, at boot, and never cleared: without a project URL and anon key (or
+   with the Supabase CDN blocked) nothing behind the login form can work, so
+   this is not a per-attempt error that the next click should wipe. */
+let authConfigError = false;
+
 function showAuthConfigError() {
   const errorEl = document.getElementById('auth-error');
+  authConfigError = true;
   errorEl.textContent = 'Supabase is not configured yet. Fill in supabase-config.js with your project URL and anon key, and run supabase-schema.sql in the SQL editor. See README.md.';
   errorEl.hidden = false;
 }
@@ -578,7 +627,6 @@ async function syncProfileFromSession(user) {
    await loadCollections(['users']);
    }
 
-<<<<<<< HEAD
 /* Supabase JS names the account id `user.id`. The Firebase version of this app
    called it `uid`, and the render layer still reads `currentUser.uid` in ~45
    places, so normalise it once here — at the only point a session enters the app
@@ -598,18 +646,12 @@ function sessionUser(session) {
   return user;
 }
 
-=======
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
 if (sbEnabled) {
   // Supabase v2 calls this with (event, session) — TWO arguments.
   // The first is the event NAME, so reading .user off it is always
   // undefined, which bounced every sign-in back to the login page.
   sb.auth.onAuthStateChange((event, session) => {
-<<<<<<< HEAD
     const user = sessionUser(session);
-=======
-    const user = session ? session.user : null;
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
     // db.users and profilesLoaded describe whoever is signed in *right now*.
     // The instant that person changes, those rows stop being true: the new
     // account is not in them yet. Read before startDataListeners() resets
@@ -693,8 +735,19 @@ function getTodoDone() {
   catch (e) { return []; }
 }
 function setTodoDone(arr) {
-  localStorage.setItem('socialearn:todoDone:' + currentUser.uid, JSON.stringify(arr));
+  safeLocal.set('socialearn:todoDone:' + currentUser.uid, JSON.stringify(arr));
 }
+
+/* localStorage throws outright — rather than returning null — when storage is
+   unavailable: blocked site data, a sandboxed iframe, a file:// page, or
+   Safari's 7-day cap. A single unguarded read at the top level was therefore
+   enough to abort the whole script, leaving a blank page with nothing in the
+   console but a SecurityError. Only the two preferences below live here, so
+   failing to store them is not worth losing the app over. */
+const safeLocal = {
+  get(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
+  set(key, val) { try { localStorage.setItem(key, val); } catch (e) { /* preference only */ } }
+};
 
 /* ---------------------------------------------------------
    8. NAVIGATION
@@ -723,7 +776,7 @@ document.querySelectorAll('[data-section-target]').forEach(btn => {
    which of the two side-by-side views you were last looking at,
    which is harmless because the teacher view renders nothing for
    someone who is not a teacher. */
-let viewMode = localStorage.getItem('socialearn:view') || 'auto';
+let viewMode = safeLocal.get('socialearn:view') || 'auto';
 
 /* 'teacher' | 'student' | null (has not chosen yet) */
 function myRole() {
@@ -734,7 +787,7 @@ function myRole() {
 
 function setViewMode(mode) {
   viewMode = mode;
-  localStorage.setItem('socialearn:view', mode);
+  safeLocal.set('socialearn:view', mode);
   renderAll();
 }
 
@@ -749,7 +802,6 @@ function roleLabel() {
   return r === 'teacher' ? 'Teacher' : r === 'student' ? 'Student' : 'No role yet';
 }
 
-<<<<<<< HEAD
 /* Which of the two side-by-side lists a page shows. A student can never teach —
    the classes insert policy requires is_teacher() — so "Teacher view" is not
    offered to one at all and they are pinned to 'student'.
@@ -769,14 +821,6 @@ function activeView() {
    is what the stored role decides and never the toggle. */
 function isTeaching() { return activeView() === 'teacher'; }
 
-=======
-/* Which list the Classroom page shows. A teacher only ever teaches, so
-   "Teacher view" is not offered to a student at all. */
-function activeView() {
-  return viewMode === 'teacher' && isTeacher() ? 'teacher' : 'student';
-}
-
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
 document.querySelectorAll('.role-switch__opt').forEach(btn => {
   btn.addEventListener('click', () => setViewMode(btn.dataset.role));
 });
@@ -948,7 +992,6 @@ document.getElementById('post-submit').addEventListener('click', async () => {
    --------------------------------------------------------- */
 function renderClassroom() {
   const grid = document.getElementById('class-grid');
-<<<<<<< HEAD
   const teaching = isTeaching();
   // The button follows the stored role, not just the toggle: join_class() refuses
   // a teacher outright, so offering "Join a class" to one would be an action the
@@ -958,17 +1001,11 @@ function renderClassroom() {
 
   document.getElementById('create-class-btn').hidden = !teaching;
   document.getElementById('join-class-btn').hidden = teaching || !canJoin;
-=======
-  const teaching = isTeacher();
-  document.getElementById('create-class-btn').hidden = !teaching;
-  document.getElementById('join-class-btn').hidden = teaching;
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
   document.getElementById('classroom-sub').textContent = teaching ? 'Classes you are teaching.' : 'Your enrolled classes, all in one place.';
 
   const list = teaching ? myTaughtClasses() : myJoinedClasses();
 
   if (list.length === 0) {
-<<<<<<< HEAD
     if (teaching) {
       grid.innerHTML = `<div class="empty-state"><p>You haven't created a class yet.</p><button class="btn btn--primary" onclick="document.getElementById('create-class-btn').click()">Create class</button></div>`;
     } else if (canJoin) {
@@ -976,11 +1013,6 @@ function renderClassroom() {
     } else {
       grid.innerHTML = `<div class="empty-state"><p>You're not enrolled in any classes. Teachers run their own classes rather than joining one with a code — switch to <b>Teacher view</b> to create one.</p></div>`;
     }
-=======
-    grid.innerHTML = teaching
-      ? `<div class="empty-state"><p>You haven't created a class yet.</p><button class="btn btn--primary" onclick="document.getElementById('create-class-btn').click()">Create class</button></div>`
-      : `<div class="empty-state"><p>You haven't joined any classes yet.</p><button class="btn btn--primary" onclick="document.getElementById('join-class-btn').click()">Join a class</button></div>`;
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
     return;
   }
 
@@ -1080,39 +1112,84 @@ document.getElementById('cc-submit').addEventListener('click', async () => {
   const errorEl = document.getElementById('cc-error');
   if (!name || !section) { errorEl.textContent = 'Please fill in both the class name and section.'; errorEl.hidden = false; return; }
 
-  let code;
-  do { code = generateClassCode(name); } while (db.classes.some(c => c.code === code));
+  const btn = document.getElementById('cc-submit');
+  errorEl.hidden = true;
+  // Three round-trips follow, so the button stays disabled across all of them:
+  // a double-click otherwise creates two classes and two group chats out of one
+  // filled-in form.
+  btn.disabled = true;
+  try {
+    // `code` is UNIQUE, and db.classes only holds this teacher's own classes —
+    // the classes policy hides everyone else's — so the local check is a
+    // courtesy, not a guarantee. Only the index is authoritative, and a real
+    // collision earns a fresh code rather than an error nobody can act on.
+    let code, created, error;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      do { code = generateClassCode(name); } while (db.classes.some(c => c.code === code));
 
-  const { data: created, error } = await sb.from('classes')
-    .insert({ name, section, code, teacher_id: currentUser.uid })
-    .select('id').single();
-  if (error) {
-    errorEl.textContent = 'Failed to create class: ' + error.message;
-    errorEl.hidden = false;
-    return;
-  }
+      // Deliberately NOT .insert(...).select('id'). That sends
+      // `Prefer: return=representation`, which makes PostgREST emit
+      // INSERT ... RETURNING — and Postgres applies the table's SELECT
+      // policy to whatever RETURNING hands back. That policy is
+      // `using (is_class_member(id))`, and is_class_member() is declared
+      // STABLE, so it reads the snapshot taken when this statement began
+      // and cannot see the class this statement is inserting. It answered
+      // false, Postgres raised
+      //   new row violates row-level security policy for table "classes"
+      // and rolled the insert back. Every teacher, every time — the one
+      // error message in this file that named a policy instead of
+      // anything the reader could act on.
+      const ins = await sb.from('classes')
+        .insert({ name, section, code, teacher_id: currentUser.uid });
+      error = ins.error;
 
-  const { error: convErr } = await sb.from('conversations').insert({
-    id: groupConvId(created.id),
-    type: 'group',
-    class_id: created.id,
-    name: `${name} — ${section}`
-  });
-  if (convErr) {
-    errorEl.textContent = 'Class created, but its group chat failed: ' + convErr.message;
-    errorEl.hidden = false;
-    return;
-  }
-  const { error: partErr } = await sb.from('conversation_participants')
-    .insert({ conversation_id: groupConvId(created.id), user_id: currentUser.uid });
-  if (partErr) {
-    errorEl.textContent = 'Class created, but its group chat failed: ' + partErr.message;
-    errorEl.hidden = false;
-    return;
-  }
+      if (!error) {
+        // The class exists now, so it is a committed row that the SELECT
+        // policy is allowed to see. `code` is UNIQUE, so this cannot pick
+        // up somebody else's class.
+        const got = await sb.from('classes').select('id').eq('code', code).single();
+        if (got.error) { error = got.error; }
+        else { created = got.data; break; }
+      }
+      if (error.code !== '23505') break;
+    }
+    if (error || !created) {
+      // 42501 on a plain insert can only be the "teachers create classes"
+      // policy, and it is the one failure a teacher can do something about.
+      errorEl.textContent = error && error.code === '42501'
+        ? 'This account cannot create classes — it has no Teacher role. Open Profile and set your role to Teacher.'
+        : 'Failed to create class: ' + ((error && error.message) || 'could not read the new class back');
+      errorEl.hidden = false;
+      return;
+    }
 
-  closeModal();
-  showToast(`Class created. Share the code ${code} with your students.`);
+    const { error: convErr } = await sb.from('conversations').insert({
+      id: groupConvId(created.id),
+      type: 'group',
+      class_id: created.id,
+      name: `${name} — ${section}`
+    });
+    if (convErr) {
+      errorEl.textContent = 'Class created, but its group chat failed: ' + convErr.message;
+      errorEl.hidden = false;
+      return;
+    }
+    const { error: partErr } = await sb.from('conversation_participants')
+      .insert({ conversation_id: groupConvId(created.id), user_id: currentUser.uid });
+    if (partErr) {
+      errorEl.textContent = 'Class created, but its group chat failed: ' + partErr.message;
+      errorEl.hidden = false;
+      return;
+    }
+
+    closeModal();
+    showToast(`Class created. Share the code ${code} with your students.`);
+  } catch (e) {
+    errorEl.textContent = 'Failed to create class: ' + ((e && e.message) || e);
+    errorEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 /* ---------------------------------------------------------
@@ -1122,11 +1199,7 @@ let currentAssignmentId = null;
 let adSelectedFilename = null;
 
 function renderAssignments() {
-<<<<<<< HEAD
   const teaching = isTeaching();
-=======
-  const teaching = isTeacher();
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
   document.getElementById('create-assignment-btn').hidden = !teaching;
 
   const classes = teaching ? myTaughtClasses() : myJoinedClasses();
@@ -1184,11 +1257,7 @@ function openAssignmentDetail(assignmentId) {
   const a = db.assignments.find(x => x.id === assignmentId);
   if (!a) return;
   const cls = findClass(a.class_id);
-<<<<<<< HEAD
   const teaching = isTeaching();
-=======
-  const teaching = isTeacher();
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
 
   document.getElementById('ad-title').textContent = a.title;
   document.getElementById('ad-meta').textContent = `${cls.name} · Due ${formatDeadline(a.deadline)}${a.points ? ' · ' + a.points + ' pts' : ''}`;

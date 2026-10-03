@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
 # SociaLearn — Social Learning, Simplified.
 
 A social-learning hub for college classes — a Google Classroom-style feed,
@@ -46,6 +42,12 @@ publication. It's idempotent — re-running it drops and rebuilds everything
 > is safe to run twice. It also back-fills: every existing profile gets
 > `role = NULL`, so each of those accounts is asked for a role once, the next
 > time they open the app.
+
+> **Seeing `new row violates row-level security policy`?** You are on a
+> database set up before the write policies existed. Run
+> `supabase-policies-migration.sql`. It replaces the read-only policies with
+> the intended per-role set, in a single transaction, and drops no tables —
+> so it is safe on a live database and safe to run twice.
 
 **2b. Teacher or Student?**
 
@@ -195,6 +197,7 @@ socialearn/
 ├── supabase-config.js   your project's URL + anon key (fill this in)
 ├── supabase-schema.sql  tables, RLS policies, trigger, RPCs, realtime
 ├── supabase-role-migration.sql  adds the Teacher/Student role to a live DB
+├── supabase-policies-migration.sql  refreshes RLS policies on a live DB
 ├── README.md
 ```
 
@@ -229,18 +232,10 @@ socialearn/
 - This goes beyond the original brief's "no authentication needed for this
   prototype" scope — worth flagging to your instructor if the assignment
   expected the simpler localStorage-only version.
-<<<<<<< HEAD
 
 ## Team
 
-=======
-=======
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
 - ALFEREZ, CHERRY JOY
 - MENDOZA, CHARISSE MAE
 - NIERE, MARILYN
 - TORRES, CARL JAY
-<<<<<<< HEAD
-=======
->>>>>>> 30a20ba96bd2660248371e48efdfc388d2919adb
->>>>>>> 894fa53c0dba714938caf6adb22ad3941a296688
