@@ -6,7 +6,7 @@
 <title>SociaLearn — Social Learning, Simplified.</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,8 +16,8 @@
   <div class="auth-card">
     <div class="auth-card__brand">
       <svg width="24" height="24" viewBox="0 0 26 26" fill="none">
-        <path d="M13 2 L24 8 L13 14 L2 8 Z" fill="var(--seafoam)"/>
-        <path d="M6 11.5 V17 C6 19 9 21 13 21 C17 21 20 19 20 17 V11.5" stroke="var(--pine)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+        <path d="M13 2 L24 8 L13 14 L2 8 Z" fill="var(--brand-primary)"/>
+        <path d="M6 11.5 V17 C6 19 9 21 13 21 C17 21 20 19 20 17 V11.5" stroke="var(--brand-ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
       </svg>
       SociaLearn
     </div>
@@ -78,16 +78,9 @@
 <div id="app-root" hidden>
 
 <header class="topbar">
-  <div class="topbar__brand">
-    <span class="brand__mark" aria-hidden="true">
-      <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
-        <path d="M13 2 L24 8 L13 14 L2 8 Z" fill="var(--seafoam)"/>
-        <path d="M6 11.5 V17 C6 19 9 21 13 21 C17 21 20 19 20 17 V11.5" stroke="var(--pine)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-      </svg>
-    </span>
-    <span class="brand__name">SociaLearn</span>
-  </div>
-
+  <!-- The logo moved down into the sidebar (see .sidenav__brand). The user
+       cluster that used to sit in the sidebar footer moved up here instead;
+       the ids are unchanged because script.js writes to them by id. -->
   <div class="topbar__search">
     <input type="search" id="global-search" placeholder="Search classes, people, assignments…" autocomplete="off">
   </div>
@@ -101,9 +94,16 @@
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2c-2.2 0-4 1.8-4 4v2.4c0 .5-.2 1-.5 1.4L4 12.5c-.5.6-.1 1.5.7 1.5h10.6c.8 0 1.2-.9.7-1.5l-1.5-2.7c-.3-.4-.5-.9-.5-1.4V6c0-2.2-1.8-4-4-4Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 16.5a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
       <span class="icon-btn__dot" id="notif-dot" hidden></span>
     </button>
-    <button type="button" class="topbar__avatar" id="avatar-btn" data-section-target="profile" aria-label="Open profile">
-      <span id="avatar-initials">JC</span>
-    </button>
+    <div class="topbar__user">
+      <button type="button" class="topbar__avatar" id="avatar-btn" data-section-target="profile" aria-label="Open profile">
+        <span id="avatar-initials">JC</span>
+      </button>
+      <span class="topbar__who">
+        <strong id="sidenav-name">—</strong>
+        <span id="sidenav-role">Student view</span>
+      </span>
+      <button type="button" class="btn btn--ghost btn--sm" id="signout-btn">Sign out</button>
+    </div>
   </div>
 </header>
 
@@ -111,6 +111,17 @@
 
   <!-- ===================== SIDEBAR (desktop) ===================== -->
   <nav class="sidenav" aria-label="Main">
+    <!-- Moved here from the topbar. Same .brand__mark / .brand__name classes. -->
+    <div class="sidenav__brand">
+      <span class="brand__mark" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+          <path d="M13 2 L24 8 L13 14 L2 8 Z" fill="var(--brand-primary)"/>
+          <path d="M6 11.5 V17 C6 19 9 21 13 21 C17 21 20 19 20 17 V11.5" stroke="var(--brand-ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="brand__name">SociaLearn</span>
+    </div>
+
     <button class="sidenav__item is-active" data-section-target="feed">
       <svg viewBox="0 0 20 20" width="19" height="19"><path d="M3 10 10 3l7 7M5 8.5V17h10V8.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span>Feed</span>
@@ -137,13 +148,6 @@
       <svg viewBox="0 0 20 20" width="19" height="19"><circle cx="10" cy="6.5" r="3.2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M3.5 17c1-3.4 4-5 6.5-5s5.5 1.6 6.5 5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
       <span>Profile</span>
     </button>
-
-    <div class="sidenav__footer">
-      <p>Signed in as</p>
-      <strong id="sidenav-name">—</strong>
-      <span id="sidenav-role">Student view</span>
-      <button type="button" class="sidenav__signout" id="signout-btn">Sign out</button>
-    </div>
   </nav>
 
   <!-- ===================== MAIN ===================== -->
