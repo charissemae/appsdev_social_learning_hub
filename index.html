@@ -11,76 +11,114 @@
 </head>
 <body>
 
-<!-- ===================== AUTH SCREEN ===================== -->
+<!-- ===================== BACKGROUND BLOBS =====================
+     Pure decoration, CSS only. Fixed, aria-hidden, never
+     interactive — it exists so the glass has something colourful
+     and out-of-focus to refract. It sits at z-index 0 and is a
+     SIBLING of #app-root, so it never becomes a containing block
+     for anything position:fixed inside the app. -->
+<div class="bg-decor" aria-hidden="true">
+  <span class="bg-blob bg-blob--pink"></span>
+  <span class="bg-blob bg-blob--lavender"></span>
+  <span class="bg-blob bg-blob--blue"></span>
+  <span class="bg-blob bg-blob--peach"></span>
+</div>
+
+<!-- ===================== AUTH SCREEN =====================
+     One glass card, split in two: a tinted brand aside and the
+     form column. Every id below is written to by script.js. -->
 <div id="auth-screen" class="auth-screen">
   <div class="auth-card">
-    <div class="auth-card__brand">
-      <svg width="24" height="24" viewBox="0 0 26 26" fill="none">
-        <path d="M13 2 L24 8 L13 14 L2 8 Z" fill="var(--brand-primary)"/>
-        <path d="M6 11.5 V17 C6 19 9 21 13 21 C17 21 20 19 20 17 V11.5" stroke="var(--brand-ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-      </svg>
-      SociaLearn
-    </div>
-    <h1 id="auth-title">Welcome back</h1>
-    <p class="auth-card__sub" id="auth-sub">Sign in to your class feed, chats, and assignments.</p>
 
-    <div id="auth-signup-fields" hidden>
-      <label>Full name</label>
-      <input type="text" id="auth-name" placeholder="Jam Carino" autocomplete="name">
+    <aside class="auth-card__aside">
+      <div class="auth-card__brand">
+        <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+          <path d="M13 2 L24 8 L13 14 L2 8 Z" fill="var(--brand-primary)"/>
+          <path d="M6 11.5 V17 C6 19 9 21 13 21 C17 21 20 19 20 17 V11.5" stroke="var(--brand-ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+        </svg>
+        SociaLearn
+      </div>
+      <h2 class="auth-card__pitch">One calm space for the whole class.</h2>
+      <p class="auth-card__pitch-sub">Posts, group chats, assignments and announcements — together, and always in sync.</p>
+      <div class="auth-card__orbs" aria-hidden="true"><span></span><span></span><span></span></div>
+    </aside>
 
-      <!-- Which kind of account this is, Google Classroom style.
-           Only on the create-account form, because that is the only place
-           we can send it: the role travels as sign-up metadata and the
-           trigger stores it. So an account made here never gets asked
-           again. "Continue with Google" has no form to carry it, so that
-           path asks once after the redirect instead (see #modal-role). -->
-      <div class="role-pick">
-        <label id="auth-role-label">I am signing up as a</label>
-        <div class="role-pick__opts" id="auth-role-pick" role="radiogroup" aria-labelledby="auth-role-label">
-          <button type="button" class="role-pick__opt is-active" data-role="teacher" role="radio" aria-checked="true">
-            <span class="role-pick__icon" aria-hidden="true">
-              <svg viewBox="0 0 20 20" width="17" height="17" fill="none"><path d="M3 16.5V8m4.7 8.5V5m4.6 11.5V9.5M17 16.5V3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-            </span>
-            <span class="role-pick__body"><b>Teacher</b><small>Create a class, share a class code</small></span>
-          </button>
-          <button type="button" class="role-pick__opt" data-role="student" role="radio" aria-checked="false">
-            <span class="role-pick__icon" aria-hidden="true">
-              <svg viewBox="0 0 20 20" width="17" height="17" fill="none"><path d="M10 4 2 8l8 4 8-4-8-4Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M5.5 10v4.2c0 1 2 2.3 4.5 2.3s4.5-1.3 4.5-2.3V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            </span>
-            <span class="role-pick__body"><b>Student</b><small>Join with a class code</small></span>
-          </button>
+    <div class="auth-card__main">
+      <h1 id="auth-title">Welcome back</h1>
+      <p class="auth-card__sub" id="auth-sub">Sign in to your class feed, chats, and assignments.</p>
+
+      <div id="auth-signup-fields" hidden>
+        <label>Full name</label>
+        <input type="text" id="auth-name" placeholder="Jam Carino" autocomplete="name">
+
+        <!-- Which kind of account this is, Google Classroom style.
+             Only on the create-account form, because that is the only place
+             we can send it: the role travels as sign-up metadata and the
+             trigger stores it. So an account made here never gets asked
+             again. "Continue with Google" has no form to carry it, so that
+             path asks once after the redirect instead (see #modal-role). -->
+        <div class="role-pick">
+          <label id="auth-role-label">I am signing up as a</label>
+          <div class="role-pick__opts" id="auth-role-pick" role="radiogroup" aria-labelledby="auth-role-label">
+            <button type="button" class="role-pick__opt is-active" data-role="teacher" role="radio" aria-checked="true">
+              <span class="role-pick__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" width="17" height="17" fill="none"><path d="M3 16.5V8m4.7 8.5V5m4.6 11.5V9.5M17 16.5V3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              </span>
+              <span class="role-pick__body"><b>Teacher</b><small>Create a class, share a class code</small></span>
+            </button>
+            <button type="button" class="role-pick__opt" data-role="student" role="radio" aria-checked="false">
+              <span class="role-pick__icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" width="17" height="17" fill="none"><path d="M10 4 2 8l8 4 8-4-8-4Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M5.5 10v4.2c0 1 2 2.3 4.5 2.3s4.5-1.3 4.5-2.3V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </span>
+              <span class="role-pick__body"><b>Student</b><small>Join with a class code</small></span>
+            </button>
+          </div>
         </div>
       </div>
+
+      <label>Email</label>
+      <input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email">
+      <label>Password</label>
+      <input type="password" id="auth-password" placeholder="At least 6 characters" autocomplete="current-password">
+
+      <p class="field-error" id="auth-error" hidden></p>
+      <p class="field-hint" id="auth-hint" hidden></p>
+
+      <button class="btn btn--primary auth-card__submit" id="auth-submit-btn">Sign in</button>
+
+      <div class="auth-divider"><span>or</span></div>
+
+      <button type="button" class="btn btn--ghost auth-card__wide" id="auth-google-btn">
+        <svg width="16" height="16" viewBox="0 0 18 18" style="vertical-align:-3px;margin-right:6px;"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.87 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.98v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.98A9 9 0 0 0 0 9c0 1.45.35 2.83.98 4.03l2.97-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .98 4.97l2.97 2.33C4.66 5.17 6.65 3.58 9 3.58z"/></svg>
+        Continue with Google
+      </button>
+
+      <p class="auth-toggle" id="auth-toggle">Don't have an account? <button type="button" id="auth-toggle-btn">Create one</button></p>
     </div>
 
-    <label>Email</label>
-    <input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email">
-    <label>Password</label>
-    <input type="password" id="auth-password" placeholder="At least 6 characters" autocomplete="current-password">
-
-    <p class="field-error" id="auth-error" hidden></p>
-    <p class="field-hint" id="auth-hint" hidden></p>
-
-    <button class="btn btn--primary" id="auth-submit-btn" style="width:100%;margin-top:14px;">Sign in</button>
-
-    <div class="auth-divider"><span>or</span></div>
-
-    <button type="button" class="btn btn--ghost" id="auth-google-btn" style="width:100%;">
-      <svg width="16" height="16" viewBox="0 0 18 18" style="vertical-align:-3px;margin-right:6px;"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.87 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.98v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.98A9 9 0 0 0 0 9c0 1.45.35 2.83.98 4.03l2.97-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .98 4.97l2.97 2.33C4.66 5.17 6.65 3.58 9 3.58z"/></svg>
-      Continue with Google
-    </button>
-
-    <p class="auth-toggle" id="auth-toggle">Don't have an account? <button type="button" id="auth-toggle-btn">Create one</button></p>
   </div>
 </div>
 
 <!-- ===================== APP (hidden until signed in) ===================== -->
 <div id="app-root" hidden>
 
+<!-- ---------- FLOATING HEADER ----------
+     Not a bar: a row of independent glass chips pinned to the top of
+     the viewport. The pointer-events:none on the row with
+     auto on each chip means the gaps between them stay clickable. -->
 <header class="topbar">
-  <!-- The logo moved down into the sidebar (see .sidenav__brand). The user
-       cluster that used to sit in the sidebar footer moved up here instead;
-       the ids are unchanged because script.js writes to them by id. -->
+  <!-- The logo, which used to sit in the sidebar. Same .sidenav__brand /
+       .brand__mark / .brand__name classes, new home. -->
+  <div class="sidenav__brand topbar__brand">
+    <span class="brand__mark" aria-hidden="true">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+        <path d="M13 2 L24 8 L13 14 L2 8 Z" fill="var(--brand-primary)"/>
+        <path d="M6 11.5 V17 C6 19 9 21 13 21 C17 21 20 19 20 17 V11.5" stroke="var(--brand-ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+      </svg>
+    </span>
+    <span class="brand__name">SociaLearn</span>
+  </div>
+
   <div class="topbar__search">
     <input type="search" id="global-search" placeholder="Search classes, people, assignments…" autocomplete="off">
   </div>
@@ -91,7 +129,7 @@
       <button type="button" class="role-switch__opt" data-role="teacher">Teacher view</button>
     </div>
     <button type="button" class="icon-btn" id="notif-btn" aria-label="Notifications">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2c-2.2 0-4 1.8-4 4v2.4c0 .5-.2 1-.5 1.4L4 12.5c-.5.6-.1 1.5.7 1.5h10.6c.8 0 1.2-.9.7-1.5l-1.5-2.7c-.3-.4-.5-.9-.5-1.4V6c0-2.2-1.8-4-4-4Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 16.5a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       <span class="icon-btn__dot" id="notif-dot" hidden></span>
     </button>
     <div class="topbar__user">
@@ -107,48 +145,41 @@
   </div>
 </header>
 
+<!-- ---------- FLOATING DOCK ----------
+     The nav is a pill fixed at the bottom-centre. Same buttons, same
+     data-section-target, same .sidenav__* classes as the old sidebar —
+     only the arrangement changed. data-label is what the CSS tooltip
+     shows on hover. -->
+<nav class="sidenav dock" aria-label="Main">
+  <button class="sidenav__item is-active" data-section-target="feed" data-label="Feed">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 10a2 2 0 0 1 .7-1.5l7-6a2 2 0 0 1 2.6 0l7 6a2 2 0 0 1 .7 1.5v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Feed</span>
+  </button>
+  <button class="sidenav__item" data-section-target="classroom" data-label="Classroom">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M12 7v14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Classroom</span>
+  </button>
+  <button class="sidenav__item" data-section-target="assignments" data-label="Assignments">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><rect x="8" y="2" width="8" height="4" rx="1.4" stroke="currentColor" stroke-width="1.6"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M12 11h4M12 16h4M8 11h.01M8 16h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <span>Assignments</span>
+  </button>
+  <button class="sidenav__item" data-section-target="chats" data-label="Chats">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M14 9a2 2 0 0 1-2 2H6l-4 3V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-3h-6a2 2 0 0 1-2-2v-1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Chats</span>
+    <span class="sidenav__badge" id="chat-badge" hidden></span>
+  </button>
+  <button class="sidenav__item" data-section-target="announcements" data-label="Announcements">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="m3 11 18-5v12L3 14v-3z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Announcements</span>
+    <span class="sidenav__badge" id="announce-badge" hidden></span>
+  </button>
+  <button class="sidenav__item" data-section-target="profile" data-label="Profile">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="1.6"/></svg>
+    <span>Profile</span>
+  </button>
+</nav>
+
 <div class="app-shell">
-
-  <!-- ===================== SIDEBAR (desktop) ===================== -->
-  <nav class="sidenav" aria-label="Main">
-    <!-- Moved here from the topbar. Same .brand__mark / .brand__name classes. -->
-    <div class="sidenav__brand">
-      <span class="brand__mark" aria-hidden="true">
-        <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
-          <path d="M13 2 L24 8 L13 14 L2 8 Z" fill="var(--brand-primary)"/>
-          <path d="M6 11.5 V17 C6 19 9 21 13 21 C17 21 20 19 20 17 V11.5" stroke="var(--brand-ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-        </svg>
-      </span>
-      <span class="brand__name">SociaLearn</span>
-    </div>
-
-    <button class="sidenav__item is-active" data-section-target="feed">
-      <svg viewBox="0 0 20 20" width="19" height="19"><path d="M3 10 10 3l7 7M5 8.5V17h10V8.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span>Feed</span>
-    </button>
-    <button class="sidenav__item" data-section-target="classroom">
-      <svg viewBox="0 0 20 20" width="19" height="19"><rect x="2.5" y="4" width="15" height="11" rx="1.6" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M2.5 7.3h15" stroke="currentColor" stroke-width="1.5"/></svg>
-      <span>Classroom</span>
-    </button>
-    <button class="sidenav__item" data-section-target="assignments">
-      <svg viewBox="0 0 20 20" width="19" height="19"><rect x="4" y="2.5" width="12" height="15" rx="1.6" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M7 7h6M7 10h6M7 13h3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <span>Assignments</span>
-    </button>
-    <button class="sidenav__item" data-section-target="chats">
-      <svg viewBox="0 0 20 20" width="19" height="19"><path d="M3 4.5h14a1 1 0 0 1 1 1V13a1 1 0 0 1-1 1H8l-4 3v-3H3a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/></svg>
-      <span>Chats</span>
-      <span class="sidenav__badge" id="chat-badge" hidden></span>
-    </button>
-    <button class="sidenav__item" data-section-target="announcements">
-      <svg viewBox="0 0 20 20" width="19" height="19"><path d="M3 8v3l3 .6V15a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-2.9l7 1.4V6.5l-7 1.4L4 6.6V8Z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg>
-      <span>Announcements</span>
-      <span class="sidenav__badge" id="announce-badge" hidden></span>
-    </button>
-    <button class="sidenav__item" data-section-target="profile">
-      <svg viewBox="0 0 20 20" width="19" height="19"><circle cx="10" cy="6.5" r="3.2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M3.5 17c1-3.4 4-5 6.5-5s5.5 1.6 6.5 5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
-      <span>Profile</span>
-    </button>
-  </nav>
 
   <!-- ===================== MAIN ===================== -->
   <main class="main">
@@ -158,26 +189,29 @@
       <div class="feed-layout">
         <div class="feed-col">
 
-          <div class="composer" id="composer">
+          <!-- Bento: the composer spans the full width of the masonry
+               flow below it. -->
+          <div class="composer card-lift" id="composer">
             <div class="composer__row">
               <span class="avatar avatar--sm" id="composer-avatar">JC</span>
               <button type="button" class="composer__fake-input" id="composer-open">Share something with your class…</button>
             </div>
           </div>
 
+          <!-- Masonry: two columns, cards never break across the gap. -->
           <div class="feed-list" id="feed-list"><!-- posts injected --></div>
         </div>
 
         <aside class="feed-side">
-          <div class="widget">
+          <div class="widget card-lift">
             <h3>Upcoming deadlines</h3>
             <ul class="widget__list" id="widget-deadlines"></ul>
           </div>
-          <div class="widget">
+          <div class="widget card-lift">
             <h3>Unread announcements</h3>
             <ul class="widget__list" id="widget-announcements"></ul>
           </div>
-          <div class="widget">
+          <div class="widget card-lift">
             <h3>Your classes</h3>
             <ul class="widget__list" id="widget-classes"></ul>
           </div>
@@ -192,12 +226,27 @@
           <h1>Classroom</h1>
           <p class="view-header__sub" id="classroom-sub">Your enrolled classes, all in one place.</p>
         </div>
-        <div class="view-header__actions">
-          <button class="btn btn--ghost" id="join-class-btn">Join a class</button>
-          <button class="btn btn--primary" id="create-class-btn" hidden>Create class</button>
-        </div>
       </div>
-      <div class="class-grid" id="class-grid"></div>
+      <!-- The bento. #class-grid is display:contents, so the cards
+           renderClassroom() injects become direct grid items of this
+           row and interleave with the dashed CTA tile. They are still
+           DOM descendants of #class-grid, so its click delegation and
+           the search filter's .class-card query keep working. -->
+      <div class="class-bento">
+        <div class="class-grid" id="class-grid"></div>
+        <aside class="class-cta card-lift">
+          <span class="class-cta__eyebrow">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"><path d="M2 9a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 9a3 3 0 0 0-6 0v6a3 3 0 0 0 6 0z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 12h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            Class code
+          </span>
+          <h3>Start or join a class</h3>
+          <p>Teachers create a class and share the code. Students join with the code they were given.</p>
+          <div class="class-cta__actions">
+            <button class="btn btn--primary" id="create-class-btn" hidden>Create class</button>
+            <button class="btn btn--ghost" id="join-class-btn">Join a class</button>
+          </div>
+        </aside>
+      </div>
     </section>
 
     <!-- ---------- ASSIGNMENTS ---------- -->
@@ -214,16 +263,20 @@
           <button class="btn btn--primary" id="create-assignment-btn" hidden>New assignment</button>
         </div>
       </div>
+      <!-- Bento of cards, clustered and tinted by data-status. -->
       <div class="assignment-list" id="assignment-list"></div>
     </section>
 
     <!-- ---------- CHATS ---------- -->
     <section class="view" id="view-chats" data-view="chats" hidden>
+      <!-- Two floating panes. #chat-window is re-rendered wholesale by
+           renderChatWindow(), so it must stay a flex column that holds
+           #chat-messages — the auto-scroll maths reads its scrollHeight. -->
       <div class="chat-layout">
         <div class="chat-list-col">
           <div class="chat-list-col__head">
             <h2>Chats</h2>
-            <button class="btn btn--ghost btn--sm" id="new-dm-btn" style="margin-top:10px;width:100%;">+ New message</button>
+            <button class="btn btn--ghost btn--sm" id="new-dm-btn">New message</button>
             <p class="chat-status" id="chat-status"></p>
           </div>
           <div class="chat-list" id="chat-list"></div>
@@ -282,7 +335,7 @@
             <button type="button" class="role-switch__opt is-active" data-role="student">Student view</button>
             <button type="button" class="role-switch__opt" data-role="teacher">Teacher view</button>
           </div>
-          <button type="button" class="btn btn--ghost" id="signout-btn-2" style="width:100%;margin-top:18px;">Sign out</button>
+          <button type="button" class="btn btn--ghost profile-signout" id="signout-btn-2">Sign out</button>
         </div>
       </div>
     </section>
@@ -290,25 +343,29 @@
   </main>
 </div>
 
-<!-- ===================== BOTTOM NAV (mobile) ===================== -->
-<nav class="bottomnav" aria-label="Main">
+<!-- ===================== LEGACY MOBILE NAV =====================
+     Kept in the DOM because script.js binds click handlers to every
+     [data-section-target] it finds at load, and it is the same set of
+     destinations the dock already offers. The floating dock replaces
+     it visually, so this stays hidden — see .bottomnav in style.css. -->
+<nav class="bottomnav" aria-hidden="true">
   <button class="bottomnav__item is-active" data-section-target="feed">
-    <svg viewBox="0 0 20 20" width="20" height="20"><path d="M3 10 10 3l7 7M5 8.5V17h10V8.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 10a2 2 0 0 1 .7-1.5l7-6a2 2 0 0 1 2.6 0l7 6a2 2 0 0 1 .7 1.5v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </button>
   <button class="bottomnav__item" data-section-target="classroom">
-    <svg viewBox="0 0 20 20" width="20" height="20"><rect x="2.5" y="4" width="15" height="11" rx="1.6" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M2.5 7.3h15" stroke="currentColor" stroke-width="1.5"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M12 7v14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </button>
   <button class="bottomnav__item" data-section-target="assignments">
-    <svg viewBox="0 0 20 20" width="20" height="20"><rect x="4" y="2.5" width="12" height="15" rx="1.6" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M7 7h6M7 10h6M7 13h3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><rect x="8" y="2" width="8" height="4" rx="1.4" stroke="currentColor" stroke-width="1.6"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M12 11h4M12 16h4M8 11h.01M8 16h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
   </button>
   <button class="bottomnav__item" data-section-target="chats">
-    <svg viewBox="0 0 20 20" width="20" height="20"><path d="M3 4.5h14a1 1 0 0 1 1 1V13a1 1 0 0 1-1 1H8l-4 3v-3H3a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M14 9a2 2 0 0 1-2 2H6l-4 3V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-3h-6a2 2 0 0 1-2-2v-1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </button>
   <button class="bottomnav__item" data-section-target="announcements">
-    <svg viewBox="0 0 20 20" width="20" height="20"><path d="M3 8v3l3 .6V15a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-2.9l7 1.4V6.5l-7 1.4L4 6.6V8Z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="m3 11 18-5v12L3 14v-3z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </button>
   <button class="bottomnav__item" data-section-target="profile">
-    <svg viewBox="0 0 20 20" width="20" height="20"><circle cx="10" cy="6.5" r="3.2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M3.5 17c1-3.4 4-5 6.5-5s5.5 1.6 6.5 5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="1.6"/></svg>
   </button>
 </nav>
 
@@ -340,7 +397,7 @@
       <p class="field-error" id="role-error" hidden></p>
     </div>
     <div class="modal__foot">
-      <button class="btn btn--primary" id="role-submit" style="width:100%;">Continue</button>
+      <button class="btn btn--primary modal__foot-wide" id="role-submit">Continue</button>
     </div>
   </div>
 

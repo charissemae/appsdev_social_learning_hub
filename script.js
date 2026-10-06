@@ -905,10 +905,10 @@ function renderPostCard(post) {
       <button class="post__more" aria-label="More options">⋯</button>
     </div>
     <p class="post__content">${escapeHTML(post.content)}</p>
-    ${post.attachment ? `<div class="post__attachment">📎 attachment.pdf</div>` : ''}
+    ${post.attachment ? `<div class="post__attachment"><svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.67 3.67 0 1 1 5.18 5.18l-9.2 9.2a1.83 1.83 0 0 1-2.59-2.6l8.49-8.48" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg> attachment.pdf</div>` : ''}
     <div class="post__actions">
-      <button class="post__action ${liked ? 'is-liked' : ''}" data-action="like" data-post="${post.id}">👍 Like (${post.likes.length})</button>
-      <button class="post__action" data-action="comment-focus" data-post="${post.id}">💬 Comment (${post.comments.length})</button>
+      <button class="post__action ${liked ? 'is-liked' : ''}" data-action="like" data-post="${post.id}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M7 10v11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg> Like (${post.likes.length})</button>
+      <button class="post__action" data-action="comment-focus" data-post="${post.id}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg> Comment (${post.comments.length})</button>
     </div>
     <div class="post__comments">
       ${post.comments.map(c => {
@@ -1021,7 +1021,7 @@ function renderClassroom() {
     if (teaching) {
       return `
       <div class="class-card">
-        <div class="class-card__banner"></div>
+        <div class="class-card__banner"><svg viewBox="0 0 24 24" width="30" height="30" fill="none"><path d="M22 10 12 5 2 10l10 5 10-5z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 12.2V17c0 1.66 2.69 3 6 3s6-1.34 6-3v-4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div class="class-card__body">
           <span class="class-card__name">${escapeHTML(c.name)}</span>
           <span class="class-card__section">${escapeHTML(c.section)}</span>
@@ -1036,7 +1036,7 @@ function renderClassroom() {
     const teacher = findUser(c.teacher_id);
     return `
       <div class="class-card">
-        <div class="class-card__banner"></div>
+        <div class="class-card__banner"><svg viewBox="0 0 24 24" width="30" height="30" fill="none"><path d="M22 10 12 5 2 10l10 5 10-5z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 12.2V17c0 1.66 2.69 3 6 3s6-1.34 6-3v-4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div class="class-card__body">
           <span class="class-card__name">${escapeHTML(c.name)}</span>
           <span class="class-card__section">${escapeHTML(c.section)} · ${teacher ? escapeHTML(teacher.name) : ''}</span>
@@ -1222,9 +1222,9 @@ function renderAssignments() {
     if (teaching) {
       const count = db.submissions.filter(s => s.assignmentId === a.id).length;
       const total = cls.studentIds.length;
-      return `
-      <div class="assignment-row" data-assignment="${a.id}">
-        <div class="assignment-row__icon">📄</div>
+return `
+      <div class="assignment-row" data-assignment="${a.id}" data-role="teacher">
+        <div class="assignment-row__icon"><svg viewBox="0 0 24 24" width="21" height="21" fill="none"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 3v4a2 2 0 0 0 2 2h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div class="assignment-row__main">
           <div class="assignment-row__title">${escapeHTML(a.title)}</div>
           <div class="assignment-row__sub">${escapeHTML(cls.name)} · Due ${formatDeadline(a.deadline)}</div>
@@ -1234,8 +1234,8 @@ function renderAssignments() {
     }
     const status = getAssignmentStatus(a, currentUser.uid);
     return `
-      <div class="assignment-row" data-assignment="${a.id}">
-        <div class="assignment-row__icon">📄</div>
+      <div class="assignment-row" data-assignment="${a.id}" data-status="${status}">
+        <div class="assignment-row__icon"><svg viewBox="0 0 24 24" width="21" height="21" fill="none"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 3v4a2 2 0 0 0 2 2h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div class="assignment-row__main">
           <div class="assignment-row__title">${escapeHTML(a.title)}</div>
           <div class="assignment-row__sub">${escapeHTML(cls.name)} · Due ${formatDeadline(a.deadline)}${a.points ? ' · ' + a.points + ' pts' : ''}</div>
@@ -1392,7 +1392,7 @@ function renderChatListOnly() {
     const last = chatPreviews[c.id];
     const name = conversationDisplayName(c);
     const face = c.type === 'group'
-      ? '#'
+      ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="3.4" stroke="currentColor" stroke-width="1.7"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16.5 3.3a4 4 0 0 1 0 7.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>'
       : avatarHTML(findUser(c.participantIds.find(id => id !== currentUser.uid)));
     return `
     <div class="chat-item ${c.id === activeConversationId ? 'is-active' : ''}" data-conv="${c.id}">
