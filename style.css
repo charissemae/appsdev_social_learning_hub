@@ -330,6 +330,68 @@ a{ color: var(--primary-deep); }
   position: absolute; top: 6px; right: 7px; width: 9px; height: 9px; border-radius: 50%;
   background: var(--red); border: 2px solid #fff;
 }
+/* When there is a real count to show, the dot grows into a small pill. */
+.icon-btn__dot--count{
+  top: 2px; right: 2px; width: auto; height: 18px; min-width: 18px;
+  padding: 0 4px; border-radius: 999px;
+  font-size: .6rem; font-weight: 700; line-height: 14px; color: #fff; text-align: center;
+}
+
+/* =========================================================
+   4b. NOTIFICATIONS PANEL — glass card under the bell chip
+   ========================================================= */
+.notif-wrap{ position: relative; }
+.notif-panel{
+  position: absolute; top: calc(100% + 10px); right: 0;
+  width: min(360px, calc(100vw - 2 * var(--pad-x)));
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-lift);
+  z-index: 80;
+  overflow: hidden;
+}
+.notif-panel__head{
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 13px 16px; border-bottom: 1px solid var(--glass-seam);
+}
+.notif-panel__head strong{ font-size: .88rem; }
+#notif-mark-all{
+  border: none; background: none; padding: 0;
+  color: var(--primary-deep); font-size: .74rem; font-weight: 500;
+}
+#notif-mark-all:hover{ text-decoration: underline; }
+.notif-panel__list{ display: flex; flex-direction: column; max-height: min(360px, 50vh); overflow-y: auto; }
+.notif-item{
+  display: flex; gap: 10px; align-items: flex-start; width: 100%;
+  border: none; border-bottom: 1px solid var(--glass-seam);
+  background: none; padding: 12px 16px; text-align: left;
+  transition: background .15s ease;
+}
+.notif-item:last-child{ border-bottom: none; }
+.notif-item:hover{ background: rgba(255,255,255,.55); }
+.notif-item__dot{
+  flex: none; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%;
+  background: var(--faint); opacity: .5;
+}
+.notif-item.is-unread .notif-item__dot{ background: var(--primary); opacity: 1; }
+.notif-item__avatar{ flex: none; width: 30px; height: 30px; font-size: .72rem; margin-top: -2px; }
+.notif-item__body{ display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.notif-item__title{ font-size: .82rem; font-weight: 500; color: var(--ink); }
+.notif-item.is-unread .notif-item__title{ font-weight: 600; }
+.notif-item__sub{
+  font-size: .71rem; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.notif-panel__foot{
+  width: 100%; border: none; border-top: 1px solid var(--glass-seam);
+  background: none; padding: 11px 16px;
+  color: var(--primary-deep); font-size: .78rem; font-weight: 600;
+}
+.notif-panel__foot:hover{ background: rgba(255,255,255,.55); }
+.notif-panel .widget__empty{ padding: 18px 16px; font-size: .8rem; }
 
 /* =========================================================
    5. ROLE SWITCH
@@ -908,7 +970,13 @@ input[type="date"]{ min-height: 44px; }
 .profile-actions{ margin-top: 28px; border-top: 1px solid var(--glass-seam); padding-top: 22px; }
 .profile-actions p{ font-size: .79rem; color: var(--muted); margin-bottom: 12px; }
 .role-switch--profile{ justify-content: center; display: inline-flex; }
+.profile-edit{ width: 100%; margin-top: 18px; }
 .profile-signout{ width: 100%; margin-top: 18px; }
+
+/* Edit-profile modal */
+.edit-profile__avatar{ display: flex; flex-direction: column; align-items: center; gap: 14px; margin-bottom: 22px; }
+.edit-profile__avatar-actions{ display: flex; gap: 10px; }
+.edit-profile__avatar-actions label{ cursor: pointer; }
 
 /* =========================================================
    16. ROLE PICKER
@@ -1071,6 +1139,17 @@ input[type="date"]{ min-height: 44px; }
   border: 1px solid var(--glass-seam);
   border-radius: var(--r-sm); padding: 11px 14px; font-size: .84rem;
 }
+.submission-row__info{ display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.submission-row__who{ font-weight: 600; color: var(--ink); }
+.submission-row__file{
+  color: var(--muted); font-size: .78rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.submission-row__nofile{ color: var(--faint); font-size: .76rem; white-space: nowrap; }
+.submission-row .btn{ flex-shrink: 0; }
+/* the student's own "already submitted" line, with its View file button */
+#ad-submitted{ display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 14px; }
+#ad-submitted[hidden]{ display: none; }
 
 /* =========================================================
    20. TOASTS
@@ -1088,6 +1167,8 @@ input[type="date"]{ min-height: 44px; }
   max-width: 340px;
 }
 .toast.toast--error{ background: rgba(197,44,49,.94); }
+.toast.toast--link{ cursor: pointer; }
+.toast.toast--link::after{ content: ' →'; opacity: .7; }
 @keyframes toast-in{ from{ opacity: 0; transform: translateY(8px); } to{ opacity: 1; transform: none; } }
 
 /* =========================================================

@@ -87,13 +87,14 @@ function generateClassCode(name) {
   return letters + '-' + rand;
 }
 
-function showToast(message, type) {
+function showToast(message, type, onClick) {
   const stack = document.getElementById('toast-stack');
   const el = document.createElement('div');
-  el.className = 'toast' + (type === 'error' ? ' toast--error' : '');
+  el.className = 'toast' + (type === 'error' ? ' toast--error' : '') + (onClick ? ' toast--link' : '');
   el.textContent = message;
+  if (onClick) el.addEventListener('click', () => { onClick(); el.remove(); });
   stack.appendChild(el);
-  setTimeout(() => el.remove(), 3200);
+  setTimeout(() => el.remove(), onClick ? 6000 : 3200);
 }
 
 function timeAgo(iso) {
@@ -139,9 +140,13 @@ let messageChannel = null;
 let refreshTimer = null;
 let pendingCollections = new Set();
 let renderScheduled = false;
+/* False until the notifications table loads once. A project that has
+   not run supabase-notifications-migration.sql falls back to the old
+   announcement-only bell instead of erroring out. */
+let notificationsEnabled = false;
 
 function emptyDb() {
-  return { users: [], classes: [], posts: [], assignments: [], submissions: [], conversations: [], announcements: [] };
+  return { users: [], classes: [], posts: [], assignments: [], submissions: [], conversations: [], announcements: [], notifications: [] };
 }
 
 function mapProfile(r) { return r; }
@@ -164,6 +169,9 @@ function mapSubmission(r) {
   return Object.assign({}, r, {
     assignmentId: r.assignment_id,
     studentId: r.student_id,
+    filePath: r.file_path,
+    mimeType: r.mime_type,
+    sizeBytes: r.size_bytes,
     timestamp: r.created_at
   });
 }
@@ -180,6 +188,17 @@ function mapAnnouncement(r) {
 }
 function mapMessage(r) {
   return { id: r.id, senderId: r.sender_id, text: r.text, timestamp: r.created_at };
+}
+function mapNotification(r) {
+  return Object.assign({}, r, {
+    userId: r.user_id,
+    actorId: r.actor_id,
+    classId: r.class_id,
+    conversationId: r.conversation_id,
+    postId: r.post_id,
+    readAt: r.read_at,
+    timestamp: r.created_at
+  });
 }
 
 const LOADERS = {
@@ -254,6 +273,23 @@ const LOADERS = {
       if (error) throw error;
       db.announcements = data.map(mapAnnouncement);
     }
+  },
+  notifications: {
+    collections: ['notifications'],
+    run: async () => {
+      try {
+        const { data, error } = await sb.from('notifications')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        db.notifications = data.map(mapNotification);
+        notificationsEnabled = true;
+      } catch (e) {
+        // Migration not applied yet — keep the announcement-only bell.
+        notificationsEnabled = false;
+        db.notifications = [];
+      }
+    }
   }
 };
 
@@ -269,6 +305,7 @@ async function loadCollections(names) {
    const list = (names && names.length) ? names : ALL_COLLECTIONS;
    await Promise.all(list.map(name => LOADERS[name].run().catch(dbError)));
    scheduleRender();
+   if (list.indexOf('submissions') !== -1) refreshOpenSubmissionList();
    // The profiles have just landed, so this is the earliest moment a role
    // can honestly be judged. renderAll() reaches settleRole() too, but
    // leaning on a 30ms render debounce to notice that an account has no
@@ -329,11 +366,20 @@ function startDataListeners() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, () => scheduleRefresh(['posts']))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments' }, () => scheduleRefresh(['assignments']))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, () => scheduleRefresh(['submissions']))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => scheduleRefresh(['announcements']))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, payload => {
+      scheduleRefresh(['announcements']);
+      // Only the pre-migration fallback toasts announcements directly;
+      // once the notifications table is live its own trigger does it.
+      if (payload && payload.eventType === 'INSERT' && !notificationsEnabled) notifyNewAnnouncement(payload.new);
+    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'announcement_reads' }, () => scheduleRefresh(['announcements']))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, () => scheduleRefresh(['conversations']))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_participants' }, () => scheduleRefresh(['conversations']))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => scheduleRefresh(['conversations']))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, payload => {
+      scheduleRefresh(['notifications']);
+      if (payload && payload.eventType === 'INSERT' && notificationsEnabled && payload.new) notifyNewNotification(payload.new);
+    })
     .subscribe();
 }
 
@@ -912,7 +958,7 @@ function renderPostCard(post) {
     </div>
     <div class="post__comments">
       ${post.comments.map(c => {
-        const cu = findUser(c.author_id);
+        const cu = findUser(c.authorId);
         return `<div class="post__comment"><span class="avatar avatar--sm" style="width:26px;height:26px;font-size:.7rem">${avatarHTML(cu)}</span>
           <div class="post__comment-bubble"><strong>${cu ? escapeHTML(cu.name) : 'Unknown'}</strong>${escapeHTML(c.text)}</div></div>`;
       }).join('')}
@@ -983,8 +1029,13 @@ document.getElementById('post-submit').addEventListener('click', async () => {
     errorEl.hidden = false;
     return;
   }
+  const firstLine = content.split('\n')[0].trim();
+  const title = firstLine.length > 80 ? firstLine.slice(0, 77) + '…' : firstLine;
+  const { error: annError } = await sb.from('announcements')
+    .insert({ class_id: classId, author_id: currentUser.uid, title, body: content });
   closeModal();
-  showToast('Post published to the class feed.');
+  if (annError) showToast('Post published, but not added to Announcements: ' + annError.message, 'error');
+  else showToast('Post published and added to Announcements.');
 });
 
 /* ---------------------------------------------------------
@@ -1194,9 +1245,63 @@ document.getElementById('cc-submit').addEventListener('click', async () => {
 
 /* ---------------------------------------------------------
    13. ASSIGNMENTS
+   Student work is a real file in the private "submissions"
+   bucket, stored at <assignmentId>/<studentId>/<unique>-<name>.
+   The submissions row only carries the metadata (filename,
+   path, type, size); the bytes live in Storage.
    --------------------------------------------------------- */
+const SUBMISSION_BUCKET = 'submissions';
+const MAX_SUBMISSION_BYTES = 25 * 1024 * 1024;
 let currentAssignmentId = null;
-let adSelectedFilename = null;
+let adSelectedFile = null;
+
+function formatBytes(bytes) {
+  if (bytes === null || bytes === undefined || isNaN(bytes)) return '';
+  if (bytes < 1024) return bytes + ' B';
+  const units = ['KB', 'MB', 'GB'];
+  let n = bytes;
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+  return (n >= 10 ? Math.round(n) : n.toFixed(1)) + ' ' + units[i];
+}
+
+function safeFileName(name) {
+  const base = (name || '').split(/[\\/]/).pop();
+  const clean = base.replace(/[^\w.\- ()[\]]+/g, '_').trim();
+  return (clean || 'file').slice(0, 100);
+}
+
+function uniquePart() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+}
+
+async function removeSubmissionFile(path) {
+  if (!path) return;
+  try { await sb.storage.from(SUBMISSION_BUCKET).remove([path]); }
+  catch (_) { /* best effort — a stale object is harmless */ }
+}
+
+async function openSubmissionFile(submissionId, btn) {
+  const sub = db.submissions.find(s => s.id === submissionId);
+  if (!sub) return;
+  if (!sub.filePath) {
+    showToast('This submission has no attached file.', 'error');
+    return;
+  }
+  const original = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
+  try {
+    const { data, error } = await sb.storage.from(SUBMISSION_BUCKET)
+      .createSignedUrl(sub.filePath, 3600);
+    if (error) throw error;
+    window.open(data.signedUrl, '_blank', 'noopener');
+  } catch (err) {
+    showToast('Could not open the file: ' + (err.message || 'unknown error'), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
+}
 
 function renderAssignments() {
   const teaching = isTeaching();
@@ -1251,9 +1356,48 @@ document.getElementById('assignment-list').addEventListener('click', e => {
   if (row) openAssignmentDetail(row.dataset.assignment);
 });
 
+function renderSubmissionList(assignmentId) {
+  const subs = db.submissions
+    .filter(s => s.assignmentId === assignmentId)
+    .sort((x, y) => new Date(y.timestamp) - new Date(x.timestamp));
+  const listEl = document.getElementById('ad-submission-list');
+  listEl.innerHTML = subs.length
+    ? subs.map(s => {
+        const u = findUser(s.student_id);
+        const meta = [s.filename, s.sizeBytes ? formatBytes(s.sizeBytes) : '', timeAgo(s.timestamp)]
+          .filter(Boolean).join(' · ');
+        // file_path is null only for submissions made before
+        // uploads were real — those still show, just unopenable.
+        const action = s.filePath
+          ? `<button type="button" class="btn btn--ghost btn--sm" data-open-submission="${s.id}">View work</button>`
+          : `<span class="submission-row__nofile">No file</span>`;
+        return `<li class="submission-row">
+          <span class="submission-row__info">
+            <span class="submission-row__who">${u ? escapeHTML(u.name) : 'Unknown student'}</span>
+            <span class="submission-row__file">${escapeHTML(meta)}</span>
+          </span>
+          ${action}
+        </li>`;
+      }).join('')
+    : `<li class="submission-row">No submissions yet.</li>`;
+}
+
+// Realtime drops new submissions into the list while the teacher
+// has the modal open, without touching whatever the student half
+// of the screen is doing.
+function refreshOpenSubmissionList() {
+  try {
+    const modal = document.getElementById('modal-assignment-detail');
+    if (!modal || modal.hidden || !currentAssignmentId || !isTeaching()) return;
+    renderSubmissionList(currentAssignmentId);
+  } catch (e) {
+    console.error('SociaLearn: submission list refresh failed', e);
+  }
+}
+
 function openAssignmentDetail(assignmentId) {
   currentAssignmentId = assignmentId;
-  adSelectedFilename = null;
+  adSelectedFile = null;
   const a = db.assignments.find(x => x.id === assignmentId);
   if (!a) return;
   const cls = findClass(a.class_id);
@@ -1265,56 +1409,142 @@ function openAssignmentDetail(assignmentId) {
   document.getElementById('ad-error').hidden = true;
   document.getElementById('ad-filename').textContent = '';
   document.getElementById('ad-file-input').value = '';
+  document.getElementById('ad-submitted').hidden = true;
+  document.getElementById('ad-submitted').textContent = '';
 
   document.getElementById('ad-student-area').hidden = teaching;
   document.getElementById('ad-teacher-area').hidden = !teaching;
   document.getElementById('ad-submit-btn').hidden = teaching;
 
   if (teaching) {
-    const subs = db.submissions.filter(s => s.assignmentId === assignmentId);
-    const listEl = document.getElementById('ad-submission-list');
-    listEl.innerHTML = subs.length
-      ? subs.map(s => {
-          const u = findUser(s.student_id);
-          return `<li class="submission-row"><span>${u ? escapeHTML(u.name) : 'Unknown'} — ${escapeHTML(s.filename)}</span><span>${timeAgo(s.timestamp)}</span></li>`;
-        }).join('')
-      : `<li class="submission-row">No submissions yet.</li>`;
+    renderSubmissionList(assignmentId);
   } else {
     const existing = findSubmission(assignmentId, currentUser.uid);
     const btn = document.getElementById('ad-submit-btn');
+    const uploadArea = document.getElementById('ad-upload-area');
     if (existing) {
-      document.getElementById('ad-filename').textContent = `Submitted: ${existing.filename} (${timeAgo(existing.timestamp)})`;
+      const submitted = document.getElementById('ad-submitted');
+      submitted.innerHTML = `Submitted: ${escapeHTML(existing.filename)}${existing.sizeBytes ? ' · ' + formatBytes(existing.sizeBytes) : ''} (${timeAgo(existing.timestamp)})`;
+      if (existing.filePath) {
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'btn btn--ghost btn--sm';
+        open.dataset.openSubmission = existing.id;
+        open.textContent = 'View file';
+        submitted.append(' ', open);
+      }
+      submitted.hidden = false;
+      // The work is already in — keep the file chooser out of the way
+      // until the student asks to resubmit.
+      uploadArea.hidden = true;
       btn.textContent = 'Resubmit';
     } else {
+      uploadArea.hidden = false;
       btn.textContent = 'Submit assignment';
     }
   }
   openModal('modal-assignment-detail');
 }
 
+document.getElementById('modal-assignment-detail').addEventListener('click', e => {
+  const btn = e.target.closest('[data-open-submission]');
+  if (btn) openSubmissionFile(btn.dataset.openSubmission, btn);
+});
+
 document.getElementById('ad-file-input').addEventListener('change', e => {
-  const file = e.target.files[0];
-  adSelectedFilename = file ? file.name : null;
-  document.getElementById('ad-filename').textContent = file ? `Selected file: ${file.name}` : '';
+  const file = e.target.files[0] || null;
+  const hint = document.getElementById('ad-filename');
+  const errorEl = document.getElementById('ad-error');
+  errorEl.hidden = true;
+  adSelectedFile = null;
+
+  if (!file) { hint.textContent = ''; return; }
+  if (file.size > MAX_SUBMISSION_BYTES) {
+    e.target.value = '';
+    hint.textContent = '';
+    errorEl.textContent = `That file is ${formatBytes(file.size)} — the limit is ${formatBytes(MAX_SUBMISSION_BYTES)}.`;
+    errorEl.hidden = false;
+    return;
+  }
+  adSelectedFile = file;
+  hint.textContent = `Selected file: ${file.name} · ${formatBytes(file.size)}`;
 });
 
 document.getElementById('ad-submit-btn').addEventListener('click', async () => {
   const errorEl = document.getElementById('ad-error');
-  if (!adSelectedFilename) { errorEl.textContent = 'Please choose a file before submitting.'; errorEl.hidden = false; return; }
-  // The unique (assignment_id, student_id) constraint means this
-  // replaces any previous submission — same as the old .set().
-  const { error } = await sb.from('submissions').upsert({
-    assignment_id: currentAssignmentId,
-    student_id: currentUser.uid,
-    filename: adSelectedFilename
-  }, { onConflict: 'assignment_id,student_id' });
-  if (error) {
-    errorEl.textContent = 'Failed to submit: ' + error.message;
+  errorEl.hidden = true;
+
+  const btn = document.getElementById('ad-submit-btn');
+  const uploadArea = document.getElementById('ad-upload-area');
+
+  // Already submitted: the first click just brings back the file chooser
+  // so the student can pick a replacement before sending it.
+  if (uploadArea.hidden) {
+    uploadArea.hidden = false;
+    document.getElementById('ad-submitted').hidden = true;
+    btn.textContent = 'Submit assignment';
+    return;
+  }
+
+  const file = adSelectedFile;
+  if (!file) {
+    errorEl.textContent = 'Please choose a file before submitting.';
     errorEl.hidden = false;
     return;
   }
-  closeModal();
-  showToast('Assignment submitted.');
+  if (file.size > MAX_SUBMISSION_BYTES) {
+    errorEl.textContent = `That file is ${formatBytes(file.size)} — the limit is ${formatBytes(MAX_SUBMISSION_BYTES)}.`;
+    errorEl.hidden = false;
+    return;
+  }
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+
+  const path = `${currentAssignmentId}/${currentUser.uid}/${uniquePart()}-${safeFileName(file.name)}`;
+  let uploaded = false;
+
+  try {
+    // 1. the bytes go to Storage first, so a row never points at
+    //    a file that isn't there.
+    const { error: uploadError } = await sb.storage.from(SUBMISSION_BUCKET)
+      .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
+    if (uploadError) throw uploadError;
+    uploaded = true;
+
+    // 2. then the metadata row. The unique (assignment_id,
+    //    student_id) constraint makes this replace the previous
+    //    submission, which is what "Resubmit" should do.
+    const previous = findSubmission(currentAssignmentId, currentUser.uid);
+    const { error } = await sb.from('submissions').upsert({
+      assignment_id: currentAssignmentId,
+      student_id: currentUser.uid,
+      filename: file.name,
+      file_path: path,
+      mime_type: file.type || null,
+      size_bytes: file.size
+    }, { onConflict: 'assignment_id,student_id' });
+    if (error) throw error;
+
+    // 3. the file it replaced is now orphaned — drop it.
+    if (previous && previous.filePath && previous.filePath !== path) {
+      removeSubmissionFile(previous.filePath);
+    }
+
+    adSelectedFile = null;
+    document.getElementById('ad-file-input').value = '';
+    document.getElementById('ad-filename').textContent = '';
+    closeModal();
+    showToast('Assignment submitted — your file is attached.');
+  } catch (err) {
+    if (uploaded) removeSubmissionFile(path);
+    errorEl.textContent = 'Failed to submit: ' + (err.message || 'unknown error');
+    errorEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 });
 
 document.getElementById('create-assignment-btn').addEventListener('click', () => {
@@ -1421,8 +1651,21 @@ function renderChats() {
 
 function openConversation(convId, fallbackConv) {
   activeConversationId = convId;
+  markConversationNotificationsRead(convId);
   renderChatListOnly();
   renderChatWindow(convId, fallbackConv);
+}
+
+// Opening a chat clears its message notifications in the bell.
+function markConversationNotificationsRead(convId) {
+  if (!notificationsEnabled || !convId) return;
+  const ids = db.notifications
+    .filter(n => n.type === 'message' && n.conversationId === convId && !n.readAt)
+    .map(n => n.id);
+  if (!ids.length) return;
+  sb.from('notifications').update({ read_at: new Date().toISOString() }).in('id', ids)
+    .then(() => { db.notifications.forEach(n => { if (ids.includes(n.id)) n.readAt = new Date().toISOString(); }); renderChrome(); })
+    .catch(() => {});
 }
 
 document.getElementById('chat-list').addEventListener('click', e => {
@@ -1602,13 +1845,10 @@ function renderAnnouncements() {
   }).join('') : `<p class="widget__empty">Nothing needs your attention today.</p>`;
 }
 
-document.getElementById('announce-unread').addEventListener('click', async e => {
+document.getElementById('announce-unread').addEventListener('click', e => {
   const btn = e.target.closest('[data-mark-read]');
   if (!btn) return;
-  const { error } = await sb.from('announcement_reads')
-    .upsert({ announcement_id: btn.dataset.markRead, user_id: currentUser.uid },
-            { onConflict: 'announcement_id,user_id' });
-  if (error) showToast('Could not mark as read: ' + error.message, 'error');
+  markAnnouncementRead(btn.dataset.markRead);
 });
 
 document.getElementById('announce-todo').addEventListener('change', e => {
@@ -1663,6 +1903,131 @@ function renderProfile() {
     btn.classList.toggle('is-active', btn.dataset.role === activeView());
   });
 }
+
+/* ---------------------------------------------------------
+   16a. EDIT PROFILE — change name and photo
+   The photo goes to the public "avatars" bucket at
+   <uid>/<unique>-<name>, and profiles.avatar_url is pointed at
+   its public URL. Everything else (role, username) is untouched.
+   --------------------------------------------------------- */
+const AVATAR_BUCKET = 'avatars';
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+let epSelectedFile = null;
+let epRemovePhoto = false;
+
+function avatarPathFromUrl(url) {
+  const marker = `/${AVATAR_BUCKET}/`;
+  const i = (url || '').indexOf(marker);
+  if (i === -1) return null;
+  return decodeURIComponent(url.slice(i + marker.length).split('?')[0]);
+}
+
+function openEditProfile() {
+  const u = me();
+  epSelectedFile = null;
+  epRemovePhoto = false;
+  document.getElementById('ep-name').value = u.name;
+  document.getElementById('ep-file-input').value = '';
+  document.getElementById('ep-error').hidden = true;
+  document.getElementById('ep-remove-photo').hidden = !u.avatar_url;
+  setAvatar(document.getElementById('ep-avatar'), u);
+  openModal('modal-edit-profile');
+}
+
+document.getElementById('edit-profile-btn').addEventListener('click', openEditProfile);
+
+document.getElementById('ep-file-input').addEventListener('change', e => {
+  const file = e.target.files[0] || null;
+  const errorEl = document.getElementById('ep-error');
+  errorEl.hidden = true;
+  epSelectedFile = null;
+  epRemovePhoto = false;
+  if (!file) return;
+  if (!/^image\//.test(file.type)) {
+    e.target.value = '';
+    errorEl.textContent = 'Please choose an image file (JPG, PNG, or GIF).';
+    errorEl.hidden = false;
+    return;
+  }
+  if (file.size > MAX_AVATAR_BYTES) {
+    e.target.value = '';
+    errorEl.textContent = `That image is ${formatBytes(file.size)} — the limit is ${formatBytes(MAX_AVATAR_BYTES)}.`;
+    errorEl.hidden = false;
+    return;
+  }
+  epSelectedFile = file;
+  document.getElementById('ep-remove-photo').hidden = false;
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('ep-avatar').innerHTML = `<img class="avatar__img" src="${reader.result}" alt="">`;
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('ep-remove-photo').addEventListener('click', () => {
+  epSelectedFile = null;
+  epRemovePhoto = true;
+  document.getElementById('ep-file-input').value = '';
+  document.getElementById('ep-remove-photo').hidden = true;
+  const name = document.getElementById('ep-name').value.trim() || me().name;
+  setAvatar(document.getElementById('ep-avatar'), { initials: initialsFromName(name) });
+});
+
+document.getElementById('ep-save-btn').addEventListener('click', async () => {
+  const errorEl = document.getElementById('ep-error');
+  errorEl.hidden = true;
+  const name = document.getElementById('ep-name').value.trim();
+  if (!name) {
+    errorEl.textContent = 'Please enter a display name.';
+    errorEl.hidden = false;
+    return;
+  }
+
+  const btn = document.getElementById('ep-save-btn');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  const current = findUser(currentUser.uid) || {};
+  let newAvatarUrl = null; // null keeps the current photo
+  let uploadedPath = null;
+
+  try {
+    if (epSelectedFile) {
+      const path = `${currentUser.uid}/${uniquePart()}-${safeFileName(epSelectedFile.name)}`;
+      const { error: upErr } = await sb.storage.from(AVATAR_BUCKET)
+        .upload(path, epSelectedFile, { contentType: epSelectedFile.type || 'image/png', upsert: false });
+      if (upErr) throw upErr;
+      uploadedPath = path;
+      newAvatarUrl = sb.storage.from(AVATAR_BUCKET).getPublicUrl(path).data.publicUrl;
+    } else if (epRemovePhoto) {
+      newAvatarUrl = '';
+    }
+
+    const patch = { name, initials: initialsFromName(name) };
+    if (newAvatarUrl !== null) patch.avatar_url = newAvatarUrl;
+
+    const { error } = await sb.from('profiles').update(patch).eq('id', currentUser.uid);
+    if (error) throw error;
+
+    // Drop the old photo only if it was ours and has just been replaced/removed.
+    if (newAvatarUrl !== null && current.avatar_url && current.avatar_url !== newAvatarUrl) {
+      const oldPath = avatarPathFromUrl(current.avatar_url);
+      if (oldPath) sb.storage.from(AVATAR_BUCKET).remove([oldPath]).catch(() => {});
+    }
+
+    closeModal();
+    showToast('Profile updated.');
+    await loadCollections(['users']);
+  } catch (err) {
+    if (uploadedPath) sb.storage.from(AVATAR_BUCKET).remove([uploadedPath]).catch(() => {});
+    errorEl.textContent = 'Could not save profile: ' + (err.message || 'unknown error');
+    errorEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+});
 
 /* ---------------------------------------------------------
    16b. ASKING FOR A ROLE ONLY WHEN THERE IS NONE
@@ -1805,11 +2170,18 @@ function renderChrome() {
   document.getElementById('sidenav-role').textContent = roleLabel();
 
   const classIds = myClasses().map(c => c.id);
-  const unreadCount = db.announcements.filter(a => classIds.includes(a.class_id) && !a.readBy.includes(currentUser.uid)).length;
+  const announceUnread = db.announcements.filter(a => classIds.includes(a.class_id) && !a.readBy.includes(currentUser.uid)).length;
   const announceBadge = document.getElementById('announce-badge');
-  announceBadge.hidden = unreadCount === 0;
-  announceBadge.textContent = unreadCount;
-  document.getElementById('notif-dot').hidden = unreadCount === 0;
+  announceBadge.hidden = announceUnread === 0;
+  announceBadge.textContent = announceUnread;
+
+  const notifUnreadCount = notificationsEnabled
+    ? db.notifications.filter(n => !n.readAt).length
+    : announceUnread;
+  const notifDot = document.getElementById('notif-dot');
+  notifDot.hidden = notifUnreadCount === 0;
+  notifDot.textContent = notifUnreadCount > 99 ? '99+' : notifUnreadCount;
+  notifDot.classList.toggle('icon-btn__dot--count', notifUnreadCount > 0);
 
   document.querySelectorAll('.role-switch__opt').forEach(btn => {
     // A student has nothing to switch to, so the option is not offered
@@ -1817,7 +2189,206 @@ function renderChrome() {
     btn.hidden = btn.dataset.role === 'teacher' && !isTeacher();
     btn.classList.toggle('is-active', btn.dataset.role === activeView());
   });
+
+  if (!document.getElementById('notif-panel').hidden) renderNotifList();
 }
+
+/* ---- notifications: bell dropdown + live toast ---- */
+function myRelevantAnnouncements() {
+  const classIds = myClasses().map(c => c.id);
+  return db.announcements
+    .filter(a => classIds.includes(a.class_id))
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+}
+
+async function markAnnouncementRead(id) {
+  const { error } = await sb.from('announcement_reads')
+    .upsert({ announcement_id: id, user_id: currentUser.uid },
+            { onConflict: 'announcement_id,user_id' });
+  if (error) showToast('Could not mark as read: ' + error.message, 'error');
+}
+
+function notifTitle(n) {
+  const actor = findUser(n.actorId);
+  const who = actor ? actor.name : 'Someone';
+  switch (n.type) {
+    case 'announcement': return 'New announcement';
+    case 'assignment':   return 'New assignment';
+    case 'submission':   return `${who} submitted work`;
+    case 'like':         return `${who} liked your post`;
+    case 'comment':      return `${who} commented on your post`;
+    case 'message': {
+      // A group chat shows the chat's own name; a direct message shows
+      // whoever actually sent it.
+      const conv = db.conversations.find(c => c.id === n.conversationId);
+      if (conv && conv.type === 'group') return conv.name || 'Group chat';
+      return who;
+    }
+    default:             return 'Update';
+  }
+}
+
+function notifSub(n) {
+  const cls = findClass(n.classId);
+  const bits = [];
+  if (n.type === 'message') {
+    if (n.body) bits.push(n.body);
+  } else {
+    if (n.body && (n.type === 'announcement' || n.type === 'assignment' || n.type === 'submission' || n.type === 'comment')) bits.push(n.body);
+    if (cls) bits.push(cls.name);
+  }
+  bits.push(timeAgo(n.timestamp));
+  return bits.filter(Boolean).join(' · ');
+}
+
+function renderNotifList() {
+  if (notificationsEnabled) {
+    const items = db.notifications.slice(0, 8);
+    const unread = items.filter(n => !n.readAt);
+    document.getElementById('notif-mark-all').hidden = unread.length === 0;
+    document.getElementById('notif-list').innerHTML = items.length ? items.map(n => {
+      const isUnread = !n.readAt;
+      const actor = findUser(n.actorId);
+      // A comment shows who wrote it, profile picture and all.
+      const lead = (n.type === 'comment' && actor)
+        ? `<span class="avatar notif-item__avatar">${avatarHTML(actor)}</span>`
+        : `<span class="notif-item__dot"></span>`;
+      return `<button type="button" class="notif-item${isUnread ? ' is-unread' : ''}" data-notif="${n.id}">
+        ${lead}
+        <span class="notif-item__body">
+          <span class="notif-item__title">${escapeHTML(notifTitle(n))}</span>
+          <span class="notif-item__sub">${escapeHTML(notifSub(n))}</span>
+        </span>
+      </button>`;
+    }).join('') : `<p class="widget__empty">No notifications yet.</p>`;
+    return;
+  }
+  // Fallback for projects that have not run the notifications migration.
+  const items = myRelevantAnnouncements().slice(0, 8);
+  const unread = items.filter(a => !a.readBy.includes(currentUser.uid));
+  document.getElementById('notif-mark-all').hidden = unread.length === 0;
+  document.getElementById('notif-list').innerHTML = items.length ? items.map(a => {
+    const cls = findClass(a.class_id);
+    const author = findUser(a.author_id);
+    const isUnread = !a.readBy.includes(currentUser.uid);
+    return `<button type="button" class="notif-item${isUnread ? ' is-unread' : ''}" data-notif="${a.id}">
+      <span class="notif-item__dot"></span>
+      <span class="notif-item__body">
+        <span class="notif-item__title">${escapeHTML(a.title)}</span>
+        <span class="notif-item__sub">${escapeHTML(author ? author.name : 'Someone')} · ${escapeHTML(cls ? cls.name : '')} · ${timeAgo(a.timestamp)}</span>
+      </span>
+    </button>`;
+  }).join('') : `<p class="widget__empty">No notifications yet.</p>`;
+}
+
+function closeNotifPanel() {
+  document.getElementById('notif-panel').hidden = true;
+  document.getElementById('notif-btn').setAttribute('aria-expanded', 'false');
+}
+
+// Fallback toast for the pre-migration announcement-only mode.
+function notifyNewAnnouncement(row) {
+  if (!currentUser || !row || row.author_id === currentUser.uid) return;
+  const classIds = myClasses().map(c => c.id);
+  if (!classIds.includes(row.class_id)) return;
+  const cls = findClass(row.class_id);
+  showToast(`New announcement · ${cls ? cls.name : 'your class'}: ${row.title}`, null,
+            () => goToSection('announcements'));
+}
+
+async function markNotificationsRead(ids) {
+  if (!ids.length) return;
+  try {
+    await sb.from('notifications').update({ read_at: new Date().toISOString() }).in('id', ids);
+  } catch (e) {
+    showToast('Could not mark notifications as read: ' + (e.message || 'unknown error'), 'error');
+    return;
+  }
+  const now = new Date().toISOString();
+  db.notifications.forEach(n => { if (ids.includes(n.id)) n.readAt = now; });
+  renderChrome();
+  if (!document.getElementById('notif-panel').hidden) renderNotifList();
+}
+
+function navigateToNotification(n) {
+  if (!n) return;
+  switch (n.type) {
+    case 'message':
+      goToSection('chats');
+      if (n.conversationId) {
+        const conv = db.conversations.find(c => c.id === n.conversationId);
+        if (conv) openConversation(conv.id, conv);
+      }
+      break;
+    case 'assignment':
+    case 'submission':
+      goToSection('assignments');
+      break;
+    case 'announcement':
+      goToSection('announcements');
+      break;
+    default:
+      goToSection('feed');
+  }
+}
+
+// Live toast raised by the realtime INSERT on the notifications table.
+function notifyNewNotification(row) {
+  if (!currentUser || !row || !notificationsEnabled) return;
+  const n = mapNotification(row);
+  let msg = notifTitle(n);
+  if (n.body) msg += ': ' + n.body;
+  if (msg.length > 120) msg = msg.slice(0, 117) + '…';
+  showToast(msg, null, () => navigateToNotification(n));
+}
+
+document.getElementById('notif-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  const panel = document.getElementById('notif-panel');
+  const willOpen = panel.hidden;
+  if (willOpen) renderNotifList();
+  panel.hidden = !willOpen;
+  document.getElementById('notif-btn').setAttribute('aria-expanded', String(willOpen));
+});
+
+document.addEventListener('click', e => {
+  if (document.getElementById('notif-panel').hidden) return;
+  if (e.target.closest('.notif-wrap')) return;
+  closeNotifPanel();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeNotifPanel();
+});
+
+document.getElementById('notif-list').addEventListener('click', e => {
+  const item = e.target.closest('[data-notif]');
+  if (!item) return;
+  const id = item.dataset.notif;
+  if (notificationsEnabled) {
+    const n = db.notifications.find(x => x.id === id) || { id };
+    markNotificationsRead([id]);
+    closeNotifPanel();
+    navigateToNotification(n);
+  } else {
+    markAnnouncementRead(id);
+    closeNotifPanel();
+    goToSection('announcements');
+  }
+});
+
+document.getElementById('notif-mark-all').addEventListener('click', async e => {
+  e.stopPropagation();
+  if (notificationsEnabled) {
+    await markNotificationsRead(db.notifications.filter(n => !n.readAt).map(n => n.id));
+  } else {
+    const unread = myRelevantAnnouncements().filter(a => !a.readBy.includes(currentUser.uid));
+    await Promise.all(unread.map(a => markAnnouncementRead(a.id)));
+    renderNotifList();
+  }
+});
+
+document.querySelector('.notif-panel__foot').addEventListener('click', closeNotifPanel);
 
 /* ---------------------------------------------------------
    18. SEARCH (light filter on Feed + Classroom)

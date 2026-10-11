@@ -24,6 +24,7 @@
 -- -------------------------------------------------------------
 drop table if exists messages            cascade;
 drop view  if exists conversation_last_message;
+drop table if exists notifications        cascade;
 drop table if exists conversation_participants cascade;
 drop table if exists conversations        cascade;
 drop table if exists announcement_reads   cascade;
@@ -51,6 +52,12 @@ drop function if exists is_teacher() cascade;
 drop function if exists protect_profile_role() cascade;
 drop function if exists in_conversation(text) cascade;
 drop function if exists make_initials(text) cascade;
+drop function if exists notify_announcement() cascade;
+drop function if exists notify_assignment() cascade;
+drop function if exists notify_submission() cascade;
+drop function if exists notify_like() cascade;
+drop function if exists notify_comment() cascade;
+drop function if exists notify_message() cascade;
 
 -- The auth triggers live on auth.users, which this script never
 -- drops, so they have to be removed by hand or a re-run dies with
@@ -149,6 +156,12 @@ create table submissions (
   assignment_id uuid not null references assignments(id) on delete cascade,
   student_id    uuid not null references profiles(id) on delete cascade,
   filename      text not null,
+  -- The file itself lives in the private "submissions" bucket at
+  -- <assignment_id>/<student_id>/<unique>-<filename>. file_path is
+  -- null only for rows written before uploads were real.
+  file_path     text,
+  mime_type     text,
+  size_bytes    bigint,
   created_at    timestamptz not null default now(),
   unique (assignment_id, student_id)
 );
@@ -200,6 +213,30 @@ create table messages (
 );
 create index on messages (conversation_id, created_at);
 
+-- One row per notification a user should see in the bell, written by
+-- the notify_* triggers below so the recipient targeting is decided
+-- in the database:
+--   teacher posts/announces  -> every STUDENT of that class
+--   teacher sets a deadline  -> every student of that class
+--   student submits work     -> the class teacher
+--   like/comment on a post   -> the author (+ commenters on a reply)
+--   chat message             -> everyone in the chat but the sender
+create table notifications (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references profiles(id) on delete cascade,
+  type            text not null check (type in
+                    ('announcement', 'assignment', 'submission',
+                     'like', 'comment', 'message')),
+  body            text not null default '',
+  class_id        uuid references classes(id) on delete cascade,
+  actor_id        uuid references profiles(id) on delete set null,
+  conversation_id text references conversations(id) on delete cascade,
+  post_id         uuid references posts(id) on delete cascade,
+  read_at         timestamptz,
+  created_at      timestamptz not null default now()
+);
+create index on notifications (user_id, read_at, created_at desc);
+
 
 -- Last message per conversation, for the chat list preview.
 -- One query instead of one "limitToLast(1)" listener per chat.
@@ -244,6 +281,21 @@ returns boolean language sql stable security definer set search_path = public as
                  where id = p_class_id and teacher_id = auth.uid())
       or exists (select 1 from class_members
                  where class_id = p_class_id and student_id = auth.uid());
+$$;
+
+-- "Am I in the class this assignment belongs to?" / "Am I its
+-- teacher?" — used by the storage policies below, which only see
+-- the object path and have to climb back to the assignment.
+create or replace function is_assignment_member(p_assignment_id uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from assignments a
+                 where a.id = p_assignment_id and is_class_member(a.class_id));
+$$;
+
+create or replace function is_assignment_teacher(p_assignment_id uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from assignments a
+                 where a.id = p_assignment_id and is_class_teacher(a.class_id));
 $$;
 
 create or replace function in_conversation(p_conversation_id text)
@@ -334,6 +386,137 @@ create trigger on_auth_user_updated
 
 
 -- -------------------------------------------------------------
+-- 3b. Notifications — who gets a bell
+--    SECURITY DEFINER so the trigger inserts are never blocked by
+--    RLS; a user can only read their OWN rows (policies below).
+-- -------------------------------------------------------------
+
+-- A teacher's announcement / feed post -> the students of that class.
+-- The join on classes.teacher_id means a *student's* mirrored post
+-- never raises a bell, and the teacher's own account is never hit.
+create or replace function public.notify_announcement()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notifications (user_id, type, body, class_id, actor_id, created_at)
+  select cm.student_id,
+         'announcement',
+         coalesce(nullif(new.title, ''), left(new.body, 120)),
+         new.class_id,
+         new.author_id,
+         new.created_at
+  from public.class_members cm
+  join public.classes c on c.id = new.class_id
+                       and c.teacher_id = new.author_id
+  where cm.class_id = new.class_id;
+  return new;
+end;
+$$;
+
+create trigger notifications_on_announcement
+  after insert on public.announcements
+  for each row execute function public.notify_announcement();
+
+-- A teacher sets an assignment -> the students of that class.
+create or replace function public.notify_assignment()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notifications (user_id, type, body, class_id, created_at)
+  select cm.student_id, 'assignment', new.title, new.class_id, new.created_at
+  from public.class_members cm
+  where cm.class_id = new.class_id;
+  return new;
+end;
+$$;
+
+create trigger notifications_on_assignment
+  after insert on public.assignments
+  for each row execute function public.notify_assignment();
+
+-- A student submits work -> the teacher who made the assignment.
+create or replace function public.notify_submission()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notifications (user_id, type, body, class_id, actor_id, created_at)
+  select c.teacher_id, 'submission', a.title, a.class_id, new.student_id, new.created_at
+  from public.assignments a
+  join public.classes c on c.id = a.class_id
+  where a.id = new.assignment_id;
+  return new;
+end;
+$$;
+
+create trigger notifications_on_submission
+  after insert on public.submissions
+  for each row execute function public.notify_submission();
+
+-- A like on your post -> you (never the liker liking themselves).
+create or replace function public.notify_like()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notifications (user_id, type, body, class_id, actor_id, post_id, created_at)
+  select p.author_id, 'like', '', p.class_id, new.user_id, new.post_id, new.created_at
+  from public.posts p
+  where p.id = new.post_id
+    and p.author_id <> new.user_id;
+  return new;
+end;
+$$;
+
+create trigger notifications_on_like
+  after insert on public.post_likes
+  for each row execute function public.notify_like();
+
+-- A comment -> the post author plus everyone who already commented
+-- on that post (so a student hears when someone replies to their
+-- comment). The commenter never pings themselves.
+create or replace function public.notify_comment()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notifications (user_id, type, body, class_id, actor_id, post_id, created_at)
+  select distinct x.author_id, 'comment', left(new.text, 200), p.class_id,
+         new.author_id, new.post_id, new.created_at
+  from public.posts p
+  join (
+    select author_id from public.comments where post_id = new.post_id and author_id <> new.author_id
+    union
+    select author_id from public.posts   where id = new.post_id and author_id <> new.author_id
+  ) x on true
+  where p.id = new.post_id;
+  return new;
+end;
+$$;
+
+create trigger notifications_on_comment
+  after insert on public.comments
+  for each row execute function public.notify_comment();
+
+-- A chat message -> everyone in the conversation except the sender.
+create or replace function public.notify_message()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notifications (user_id, type, body, conversation_id, actor_id, created_at)
+  select cp.user_id, 'message', left(new.text, 200), new.conversation_id,
+         new.sender_id, new.created_at
+  from public.conversation_participants cp
+  where cp.conversation_id = new.conversation_id
+    and cp.user_id <> new.sender_id;
+  return new;
+end;
+$$;
+
+create trigger notifications_on_message
+  after insert on public.messages
+  for each row execute function public.notify_message();
+
+revoke execute on function public.notify_announcement() from public, anon;
+revoke execute on function public.notify_assignment() from public, anon;
+revoke execute on function public.notify_submission() from public, anon;
+revoke execute on function public.notify_like() from public, anon;
+revoke execute on function public.notify_comment() from public, anon;
+revoke execute on function public.notify_message() from public, anon;
+
+
+-- -------------------------------------------------------------
 -- 4. Row Level Security
 --    Everyone must be signed in, then you only see/touch rows
 --    belonging to classes you are in (or chats you are in).
@@ -351,6 +534,7 @@ alter table announcement_reads   enable row level security;
 alter table conversations        enable row level security;
 alter table conversation_participants enable row level security;
 alter table messages             enable row level security;
+alter table notifications        enable row level security;
 
 -- profiles: everyone signed in can see names/avatars (the feed
 -- needs to label posts); you can only edit your own row.
@@ -524,6 +708,16 @@ create policy "participants send messages"
   with check (sender_id = auth.uid() and in_conversation(conversation_id));
 create policy "senders delete own messages"
   on messages for delete to authenticated using (sender_id = auth.uid());
+
+-- Notifications: each user reads and marks-as-read exactly their own
+-- rows. Rows themselves are created ONLY by the notify_* triggers
+-- (SECURITY DEFINER), so there is deliberately no insert/delete
+-- policy here — nobody can forge their own bell.
+create policy "users read own notifications"
+  on notifications for select to authenticated using (user_id = auth.uid());
+create policy "users mark notifications read"
+  on notifications for update to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 
 -- -------------------------------------------------------------
@@ -699,7 +893,7 @@ begin
     'profiles', 'classes', 'class_members', 'posts', 'post_likes',
     'comments', 'assignments', 'submissions', 'announcements',
     'announcement_reads', 'conversations',
-    'conversation_participants', 'messages'
+    'conversation_participants', 'messages', 'notifications'
   ] loop
     begin
       execute format('alter publication supabase_realtime add table %I', t);
@@ -707,3 +901,88 @@ begin
     end;
   end loop;
 end $$;
+
+
+-- -------------------------------------------------------------
+-- 7. Storage — assignment submission files
+--    A student's work is a real file in a private bucket, laid
+--    out as <assignment_id>/<student_id>/<unique>-<filename>.
+--    Everything is decided by that path:
+--      * you may only write into your own folder
+--      * only you (the owner) and your class teacher may read
+--    RLS on storage.objects is enforced by Supabase Storage, so
+--    a leaked path is still useless to anyone else.
+-- -------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('submissions', 'submissions', false, 26214400) -- 25 MB per file
+on conflict (id) do update set file_size_limit = excluded.file_size_limit,
+                                public         = excluded.public;
+
+-- storage.foldername('a/b/c.txt') returns {a,b}: index 1 is the
+-- assignment id, index 2 is the student id. The uuid guard comes
+-- first so a junk path fails the policy instead of raising on
+-- the cast.
+drop policy if exists "students upload submission files" on storage.objects;
+create policy "students upload submission files"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'submissions'
+    and array_length(storage.foldername(name), 1) = 2
+    and (storage.foldername(name))[1] ~* '^[0-9a-f-]{36}$'
+    and (storage.foldername(name))[2] = auth.uid()::text
+    and public.is_assignment_member(((storage.foldername(name))[1])::uuid)
+  );
+
+drop policy if exists "owner and teacher read submission files" on storage.objects;
+create policy "owner and teacher read submission files"
+  on storage.objects for select to authenticated
+  using (
+    bucket_id = 'submissions'
+    and array_length(storage.foldername(name), 1) = 2
+    and (storage.foldername(name))[1] ~* '^[0-9a-f-]{36}$'
+    and ( (storage.foldername(name))[2] = auth.uid()::text
+          or public.is_assignment_teacher(((storage.foldername(name))[1])::uuid) )
+  );
+
+-- Resubmitting replaces the old object, and a teacher clearing a
+-- submission removes it, so deletion follows the same rule.
+drop policy if exists "delete submission files" on storage.objects;
+create policy "delete submission files"
+  on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'submissions'
+    and array_length(storage.foldername(name), 1) = 2
+    and (storage.foldername(name))[1] ~* '^[0-9a-f-]{36}$'
+    and ( (storage.foldername(name))[2] = auth.uid()::text
+          or public.is_assignment_teacher(((storage.foldername(name))[1])::uuid) )
+  );
+
+
+-- -------------------------------------------------------------
+-- 7b. Storage — profile photos
+--    A public "avatars" bucket holding <uid>/<unique>-<name>. The
+--    bucket is public so a photo can be shown from its public URL
+--    anywhere; writes stay locked to your own folder.
+-- -------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('avatars', 'avatars', true, 5242880) -- 5 MB per photo
+on conflict (id) do update set public         = excluded.public,
+                                file_size_limit = excluded.file_size_limit;
+
+drop policy if exists "users upload own avatar" on storage.objects;
+create policy "users upload own avatar"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "users update own avatar" on storage.objects;
+create policy "users update own avatar"
+  on storage.objects for update to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "users delete own avatar" on storage.objects;
+create policy "users delete own avatar"
+  on storage.objects for delete to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
