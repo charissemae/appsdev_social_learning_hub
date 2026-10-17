@@ -162,8 +162,11 @@ create table submissions (
   file_path     text,
   mime_type     text,
   size_bytes    bigint,
+  -- Points awarded by the class teacher. Null = not graded yet.
+  score         integer,
   created_at    timestamptz not null default now(),
-  unique (assignment_id, student_id)
+  unique (assignment_id, student_id),
+  constraint submissions_score_nonnegative check (score is null or score >= 0)
 );
 create index on submissions (assignment_id);
 create index on submissions (student_id);
@@ -204,11 +207,19 @@ create table conversation_participants (
 );
 create index on conversation_participants (user_id);
 
+-- A message is text, an attachment, or both. The bytes of a photo
+-- or video live in the private "chat-attachments" bucket at
+-- <conversationId>/<senderId>/<unique>-<filename>; these columns
+-- only carry that path and its metadata.
 create table messages (
   id              uuid primary key default gen_random_uuid(),
   conversation_id text not null references conversations(id) on delete cascade,
   sender_id       uuid not null references profiles(id) on delete cascade,
-  text            text not null,
+  text            text not null default '',
+  attachment_path text,
+  attachment_name text,
+  mime_type       text,
+  size_bytes      bigint,
   created_at      timestamptz not null default now()
 );
 create index on messages (conversation_id, created_at);
@@ -659,6 +670,14 @@ create policy "students submit own work"
 create policy "students resubmit"
   on submissions for update to authenticated
   with check (student_id = auth.uid());
+create policy "teachers grade submissions"
+  on submissions for update to authenticated
+  using (exists (select 1 from assignments a
+                 where a.id = submissions.assignment_id
+                   and is_class_teacher(a.class_id)))
+  with check (exists (select 1 from assignments a
+                      where a.id = submissions.assignment_id
+                        and is_class_teacher(a.class_id)));
 create policy "teachers delete submissions"
   on submissions for delete to authenticated
   using (exists (select 1 from assignments a
@@ -986,3 +1005,44 @@ drop policy if exists "users delete own avatar" on storage.objects;
 create policy "users delete own avatar"
   on storage.objects for delete to authenticated
   using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+
+-- -------------------------------------------------------------
+-- 7c. Storage — chat attachments (photos and videos)
+--    A private bucket laid out as
+--    <conversationId>/<senderId>/<unique>-<filename>. The path is
+--    the whole rule: only the sender writes into their own folder
+--    inside a conversation they belong to, and only members of that
+--    conversation may read it. Files open through a signed URL, so
+--    a leaked path is still useless to anyone outside the chat.
+-- -------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('chat-attachments', 'chat-attachments', false, 26214400) -- 25 MB per file
+on conflict (id) do update set file_size_limit = excluded.file_size_limit,
+                                public         = excluded.public;
+
+drop policy if exists "conversation members upload chat files" on storage.objects;
+create policy "conversation members upload chat files"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'chat-attachments'
+    and array_length(storage.foldername(name), 1) = 2
+    and (storage.foldername(name))[2] = auth.uid()::text
+    and public.in_conversation((storage.foldername(name))[1])
+  );
+
+drop policy if exists "conversation members read chat files" on storage.objects;
+create policy "conversation members read chat files"
+  on storage.objects for select to authenticated
+  using (
+    bucket_id = 'chat-attachments'
+    and public.in_conversation((storage.foldername(name))[1])
+  );
+
+drop policy if exists "senders delete chat files" on storage.objects;
+create policy "senders delete chat files"
+  on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'chat-attachments'
+    and (storage.foldername(name))[2] = auth.uid()::text
+  );

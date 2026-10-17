@@ -57,6 +57,18 @@ publication. It's idempotent — re-running it drops and rebuilds everything
 > a chat when a message lands, and anyone whose comment got a reply. Run it
 > as postgres in the SQL editor; it is safe to re-run.
 
+> **Want to edit or delete chats?** Run
+> `supabase-chat-edit-migration.sql`. It adds the `messages.edited_at` column
+> and the UPDATE policy that lets a sender edit their own message (delete
+> already worked, and teachers could already edit/delete their own classes).
+> It only adds — no existing message is changed — and it is safe to re-run.
+
+> **Want to grade submissions?** Run
+> `supabase-assignment-score-migration.sql`. It adds the `submissions.score`
+> column and the UPDATE policy that lets the class teacher score a student's
+> work, so the student can see their score. It only adds — existing rows keep
+> a null (ungraded) score — and it is safe to re-run.
+
 **2b. Teacher or Student?**
 
 The role is chosen once and then belongs to the account, the same way Google
@@ -184,8 +196,11 @@ chat. That collapses what used to be three separate client-side writes.
 - **Feed** — a live stream of classroom posts with likes and comments.
 - **Classroom** — teachers create classes and get a unique class code;
   students join with that code, which auto-links them to the class's group
-  chat. "Student view" / "Teacher view" is a real filter — classes you're
-  enrolled in vs. classes you created, since one account can be both.
+  chat. Teachers can also rename a class (the code stays the same) or delete
+  one they own — deleting a class also removes its group chat, assignments,
+  announcements and posts, after a confirmation. A teacher's account always
+  shows the classes they teach, and a student's always shows the classes
+  they're enrolled in — there is no view toggle.
 - **Assignments** — teachers create assignments with a deadline and points;
   students see live status badges (Upcoming / Due soon / Missing /
   Submitted) and submit a real attached file (PDF, image, doc, zip —
@@ -193,6 +208,9 @@ chat. That collapses what used to be three separate client-side writes.
   see every submission and click **View work** to read the actual file.
 - **Chats** — real-time direct messages and class group chats. Use
   **"+ New message"** on the Chats page to start a DM with any classmate.
+  Hover your own message to edit or delete it (edited messages are marked);
+  deleting a message also removes its attachment. (Needs
+  `supabase-chat-edit-migration.sql`.)
 - **Announcements & To-Do** — teachers post announcements per class;
   students see unread announcements, upcoming deadlines, and a daily to-do
   list (the to-do checkboxes are personal/`localStorage`, not shared).
@@ -223,6 +241,7 @@ socialearn/
 ├── supabase-role-migration.sql  adds the Teacher/Student role to a live DB
 ├── supabase-policies-migration.sql  refreshes RLS policies on a live DB
 ├── supabase-submission-files-migration.sql  adds real file uploads to a live DB
+├── supabase-assignment-score-migration.sql  adds submission scoring to a live DB
 ├── supabase-announcement-backfill.sql  mirrors existing teacher posts into announcements
 ├── README.md
 ```

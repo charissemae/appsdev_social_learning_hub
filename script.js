@@ -172,6 +172,7 @@ function mapSubmission(r) {
     filePath: r.file_path,
     mimeType: r.mime_type,
     sizeBytes: r.size_bytes,
+    score: (r.score === null || r.score === undefined) ? null : r.score,
     timestamp: r.created_at
   });
 }
@@ -187,7 +188,17 @@ function mapAnnouncement(r) {
   });
 }
 function mapMessage(r) {
-  return { id: r.id, senderId: r.sender_id, text: r.text, timestamp: r.created_at };
+  return {
+    id: r.id,
+    senderId: r.sender_id,
+    text: r.text,
+    timestamp: r.created_at,
+    attachmentPath: r.attachment_path || null,
+    attachmentName: r.attachment_name || null,
+    mimeType: r.mime_type || null,
+    sizeBytes: r.size_bytes || null,
+    editedAt: r.edited_at || null
+  };
 }
 function mapNotification(r) {
   return Object.assign({}, r, {
@@ -818,23 +829,14 @@ document.querySelectorAll('[data-section-target]').forEach(btn => {
    login), and Postgres refuses any later change. Everything
    below reads that stored value.
 
-   localStorage is still used for one thing only: remembering
-   which of the two side-by-side views you were last looking at,
-   which is harmless because the teacher view renders nothing for
-   someone who is not a teacher. */
-let viewMode = safeLocal.get('socialearn:view') || 'auto';
+   A teacher's account is always on Teacher view and a student's is
+   always on Student view, so there is no toggle to remember. */
 
 /* 'teacher' | 'student' | null (has not chosen yet) */
 function myRole() {
   if (!currentUser) return null;
   const me = db.users.find(u => u.id === currentUser.uid);
   return me ? (me.role || null) : null;
-}
-
-function setViewMode(mode) {
-  viewMode = mode;
-  safeLocal.set('socialearn:view', mode);
-  renderAll();
 }
 
 /* Every teacher-only capability in the UI asks this one function, and
@@ -848,28 +850,19 @@ function roleLabel() {
   return r === 'teacher' ? 'Teacher' : r === 'student' ? 'Student' : 'No role yet';
 }
 
-/* Which of the two side-by-side lists a page shows. A student can never teach —
-   the classes insert policy requires is_teacher() — so "Teacher view" is not
-   offered to one at all and they are pinned to 'student'.
-
-   The remembered preference defaults to 'auto', meaning "nothing chosen yet",
-   which resolves to whatever the stored role actually allows. That way a teacher
-   lands on Teacher view instead of on an empty student list they never picked. */
+/* Which list a page shows. A teacher's account is always on Teacher view
+   and a student's is always on Student view — there is no switch. A student
+   can never teach anyway: the classes insert policy requires is_teacher(),
+   so a teacher-only list would be empty for them. */
 function activeView() {
-  if (!isTeacher()) return 'student';
-  return viewMode === 'student' ? 'student' : 'teacher';
+  return isTeacher() ? 'teacher' : 'student';
 }
 
-/* The view-scoped twin of isTeacher(). Anything that filters a list by role has
-   to ask this one, not isTeacher() — asking isTeacher() is exactly why the
-   toggle only moved the highlight and changed nothing else. isTeacher() stays
-   the answer to "may this account perform a teacher-only action at all", which
-   is what the stored role decides and never the toggle. */
+/* The view-scoped twin of isTeacher(). Anything that filters a list by role
+   has to ask this one, not isTeacher(). isTeacher() stays the answer to "may
+   this account perform a teacher-only action at all", which is what the
+   stored role decides. */
 function isTeaching() { return activeView() === 'teacher'; }
-
-document.querySelectorAll('.role-switch__opt').forEach(btn => {
-  btn.addEventListener('click', () => setViewMode(btn.dataset.role));
-});
 
 /* ---------------------------------------------------------
    10. MODALS
@@ -1043,6 +1036,9 @@ document.getElementById('post-submit').addEventListener('click', async () => {
    --------------------------------------------------------- */
 function renderClassroom() {
   const grid = document.getElementById('class-grid');
+  // A repaint replaces the button the menu was anchored to, so put the
+  // menu away rather than leaving it floating over the new grid.
+  closeItemMenu();
   const teaching = isTeaching();
   // The button follows the stored role, not just the toggle: join_class() refuses
   // a teacher outright, so offering "Join a class" to one would be an action the
@@ -1081,6 +1077,7 @@ function renderClassroom() {
         <div class="class-card__footer">
           <button class="btn btn--ghost btn--sm" data-open-chat-class="${c.id}">Group chat</button>
           <button class="btn btn--ghost btn--sm" data-view-assignments-class="${c.id}">Assignments</button>
+          <button type="button" class="class-card__menu" data-class-menu="${c.id}" title="Class options" aria-label="Class options" aria-haspopup="menu"><svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="19" cy="12" r="1.7" fill="currentColor"/></svg></button>
         </div>
       </div>`;
     }
@@ -1114,8 +1111,86 @@ document.getElementById('class-grid').addEventListener('click', e => {
     goToSection('assignments');
     document.getElementById('assignment-filter').value = asgBtn.dataset.viewAssignmentsClass;
     renderAssignments();
+    return;
+  }
+  const menuBtn = e.target.closest('[data-class-menu]');
+  if (menuBtn) {
+    e.stopPropagation();
+    const id = menuBtn.dataset.classMenu;
+    openItemMenu(menuBtn, 'class:' + id, { onEdit: () => openEditClass(id), onDelete: () => deleteClass(id) });
   }
 });
+
+let editingClassId = null;
+
+function openEditClass(id) {
+  const c = findClass(id);
+  if (!c) return;
+  editingClassId = id;
+  document.getElementById('ec-name').value = c.name || '';
+  document.getElementById('ec-section').value = c.section || '';
+  document.getElementById('ec-code-hint').textContent = `Students join with the code ${c.code} — it stays the same when you rename the class.`;
+  document.getElementById('ec-error').hidden = true;
+  openModal('modal-edit-class');
+}
+
+document.getElementById('ec-save-btn').addEventListener('click', async () => {
+  const name = document.getElementById('ec-name').value.trim();
+  const section = document.getElementById('ec-section').value.trim();
+  const errorEl = document.getElementById('ec-error');
+  if (!name || !section) {
+    errorEl.textContent = 'Please fill in both the class name and section.';
+    errorEl.hidden = false;
+    return;
+  }
+
+  const btn = document.getElementById('ec-save-btn');
+  btn.disabled = true;
+  // No .select() on the update: RETURNING would re-apply the SELECT
+  // policy to the row and 42501 for no useful reason (see cc-submit).
+  const { error } = await sb.from('classes')
+    .update({ name, section })
+    .eq('id', editingClassId);
+  btn.disabled = false;
+  if (error) {
+    errorEl.textContent = 'Could not save: ' + error.message;
+    errorEl.hidden = false;
+    return;
+  }
+  // Mirror the change so the card and every chat title update at once —
+  // conversationDisplayName() reads the class, not the stored chat name.
+  const c = findClass(editingClassId);
+  if (c) { c.name = name; c.section = section; }
+  closeModal();
+  showToast('Class updated.');
+  renderAll();
+});
+
+async function deleteClass(id) {
+  const c = findClass(id);
+  if (!c) return;
+  // Deleting the row cascades: its group chat and messages, assignments,
+  // announcements and posts all go with it. Say so before it happens.
+  const ok = window.confirm(
+    `Delete "${c.name} — ${c.section}"?\n\nThis also removes its group chat, assignments, announcements and posts. This cannot be undone.`
+  );
+  if (!ok) return;
+
+  const { error } = await sb.from('classes').delete().eq('id', id);
+  if (error) { showToast('Could not delete class: ' + error.message, 'error'); return; }
+
+  // Drop it from the mirror right away, before realtime catches up, so
+  // the card disappears on click. Re-read everything it cascaded into.
+  db.classes = db.classes.filter(x => x.id !== id);
+  db.conversations = db.conversations.filter(conv => conv.class_id !== id);
+  if (activeConversationId === groupConvId(id)) {
+    activeConversationId = null;
+    currentMessages = [];
+    currentConversation = null;
+  }
+  showToast('Class deleted.');
+  loadCollections(['classes', 'conversations', 'assignments', 'announcements', 'posts']);
+}
 
 document.getElementById('join-class-btn').addEventListener('click', () => {
   document.getElementById('join-code-input').value = '';
@@ -1360,6 +1435,9 @@ function renderSubmissionList(assignmentId) {
   const subs = db.submissions
     .filter(s => s.assignmentId === assignmentId)
     .sort((x, y) => new Date(y.timestamp) - new Date(x.timestamp));
+  const assignment = db.assignments.find(a => a.id === assignmentId);
+  const maxRow = (assignment && assignment.points)
+    ? `<span class="grade__max">/ ${escapeHTML(String(assignment.points))}</span>` : '';
   const listEl = document.getElementById('ad-submission-list');
   listEl.innerHTML = subs.length
     ? subs.map(s => {
@@ -1371,15 +1449,53 @@ function renderSubmissionList(assignmentId) {
         const action = s.filePath
           ? `<button type="button" class="btn btn--ghost btn--sm" data-open-submission="${s.id}">View work</button>`
           : `<span class="submission-row__nofile">No file</span>`;
+        const score = (s.score === null || s.score === undefined) ? '' : s.score;
         return `<li class="submission-row">
-          <span class="submission-row__info">
-            <span class="submission-row__who">${u ? escapeHTML(u.name) : 'Unknown student'}</span>
-            <span class="submission-row__file">${escapeHTML(meta)}</span>
-          </span>
-          ${action}
+          <div class="submission-row__head">
+            <span class="submission-row__info">
+              <span class="submission-row__who">${u ? escapeHTML(u.name) : 'Unknown student'}</span>
+              <span class="submission-row__file">${escapeHTML(meta)}</span>
+            </span>
+            ${action}
+          </div>
+          <div class="submission-row__grade">
+            <span class="submission-row__grade-label">Score</span>
+            <input type="number" class="grade__input" min="0" step="1" inputmode="numeric"
+                   data-score-input="${s.id}" value="${score}" placeholder="—" aria-label="Score">
+            ${maxRow}
+            <button type="button" class="btn btn--ghost btn--sm" data-save-score="${s.id}">Save</button>
+          </div>
         </li>`;
       }).join('')
     : `<li class="submission-row">No submissions yet.</li>`;
+}
+
+// The teacher types a number and saves it. RLS lets the class
+// teacher update a submission in their own class.
+async function saveSubmissionScore(submissionId, btn) {
+  const input = document.querySelector(`[data-score-input="${submissionId}"]`);
+  const raw = input ? input.value.trim() : '';
+  let value = null;
+  if (raw !== '') {
+    value = Number(raw);
+    if (!Number.isInteger(value) || value < 0) {
+      showToast('Enter a whole number (0 or more) as the score.', 'error');
+      return;
+    }
+  }
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  const { error } = await sb.from('submissions').update({ score: value }).eq('id', submissionId);
+  btn.disabled = false;
+  btn.textContent = label;
+  if (error) {
+    showToast('Could not save the score: ' + error.message, 'error');
+    return;
+  }
+  const sub = db.submissions.find(s => s.id === submissionId);
+  if (sub) sub.score = value;
+  showToast('Score saved.');
 }
 
 // Realtime drops new submissions into the list while the teacher
@@ -1433,6 +1549,12 @@ function openAssignmentDetail(assignmentId) {
         open.textContent = 'View file';
         submitted.append(' ', open);
       }
+      if (existing.score !== null && existing.score !== undefined) {
+        const scoreEl = document.createElement('span');
+        scoreEl.className = 'ad-score';
+        scoreEl.textContent = `Score: ${existing.score}${a.points ? ' / ' + a.points : ''}`;
+        submitted.append(' ', scoreEl);
+      }
       submitted.hidden = false;
       // The work is already in — keep the file chooser out of the way
       // until the student asks to resubmit.
@@ -1447,8 +1569,19 @@ function openAssignmentDetail(assignmentId) {
 }
 
 document.getElementById('modal-assignment-detail').addEventListener('click', e => {
-  const btn = e.target.closest('[data-open-submission]');
-  if (btn) openSubmissionFile(btn.dataset.openSubmission, btn);
+  const open = e.target.closest('[data-open-submission]');
+  if (open) { openSubmissionFile(open.dataset.openSubmission, open); return; }
+  const save = e.target.closest('[data-save-score]');
+  if (save) saveSubmissionScore(save.dataset.saveScore, save);
+});
+
+document.getElementById('ad-submission-list').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const input = e.target.closest('[data-score-input]');
+  if (!input) return;
+  e.preventDefault();
+  const btn = document.querySelector(`[data-save-score="${input.dataset.scoreInput}"]`);
+  if (btn) saveSubmissionScore(input.dataset.scoreInput, btn);
 });
 
 document.getElementById('ad-file-input').addEventListener('change', e => {
@@ -1590,6 +1723,17 @@ document.getElementById('a-submit').addEventListener('click', async () => {
        conversation IDs (group-<classId>, dm-<sorted uids>)
    --------------------------------------------------------- */
 let activeConversationId = null;
+// The messages currently painted, and the conversation they belong to.
+// Kept so the per-message edit / delete buttons can resolve an id to a
+// message and repaint without re-reading the whole conversation.
+let currentMessages = [];
+let currentConversation = null;
+let editingMessageId = null;
+// Photos and videos a message can carry live in this private bucket
+// at <conversationId>/<senderId>/<unique>-<filename>.
+const CHAT_BUCKET = 'chat-attachments';
+const MAX_CHAT_BYTES = 25 * 1024 * 1024;
+let chatAttachedFile = null;
 
 function myConversations() {
   const classIds = myClasses().map(c => c.id);
@@ -1600,8 +1744,14 @@ function myConversations() {
 }
 
 function conversationDisplayName(conv) {
-  if (conv.type === 'group') return conv.name;
-  const otherId = conv.participantIds.find(id => id !== currentUser.uid);
+  if (conv.type === 'group') {
+    // The group's stored name is a snapshot taken when the class was
+    // created. Read the class back instead, so renaming a class updates
+    // every place the chat title is shown without rewriting the row.
+    const cls = conv.class_id ? findClass(conv.class_id) : null;
+    return cls ? `${cls.name} — ${cls.section}` : conv.name;
+  }
+  const otherId = (conv.participantIds || []).find(id => id !== currentUser.uid);
   const other = findUser(otherId);
   return other ? other.name : 'Unknown';
 }
@@ -1629,7 +1779,7 @@ function renderChatListOnly() {
       <span class="avatar avatar--sm">${face}</span>
       <div class="chat-item__meta">
         <div class="chat-item__name">${escapeHTML(name)}</div>
-        <div class="chat-item__preview">${last ? escapeHTML(last.text) : 'No messages yet'}</div>
+        <div class="chat-item__preview">${last ? escapeHTML(last.text || 'Attachment') : 'No messages yet'}</div>
       </div>
       <span class="chat-item__time">${last ? timeAgo(last.timestamp) : ''}</span>
     </div>`;
@@ -1673,28 +1823,230 @@ document.getElementById('chat-list').addEventListener('click', e => {
   if (item) openConversation(item.dataset.conv);
 });
 
+// #chat-window persists across renders, so one delegated listener
+// covers every file chip a message ever paints.
+document.getElementById('chat-window').addEventListener('click', e => {
+  const chip = e.target.closest('.msg__att--file');
+  if (!chip) return;
+  const url = chip.dataset.attUrl;
+  if (url) window.open(url, '_blank', 'noopener');
+});
+
+// Every row that has a "⋯" — a chat bubble or a class card — opens the
+// one shared Edit / Delete menu. The button only ever carries an id the
+// account is already allowed to change.
+let itemMenuHandlers = null;
+let itemMenuKey = null;
+
+function openItemMenu(anchor, key, handlers) {
+  const menu = document.getElementById('item-menu');
+  // A second click on the same "⋯" puts it away instead of reopening.
+  if (!menu.hidden && itemMenuKey === key) { closeItemMenu(); return; }
+  itemMenuKey = key;
+  itemMenuHandlers = handlers;
+  menu.hidden = false;
+  // Place it just under the button, right-aligned, and keep it on screen.
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  let left = r.right - mw;
+  let top = r.bottom + 6;
+  if (left < 8) left = 8;
+  if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+  if (top + mh > window.innerHeight - 8) top = r.top - mh - 6;
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+
+function closeItemMenu() {
+  const menu = document.getElementById('item-menu');
+  if (menu) menu.hidden = true;
+  itemMenuHandlers = null;
+  itemMenuKey = null;
+}
+
+document.getElementById('item-menu-edit').addEventListener('click', () => {
+  const h = itemMenuHandlers;
+  closeItemMenu();
+  if (h && h.onEdit) h.onEdit();
+});
+
+document.getElementById('item-menu-del').addEventListener('click', () => {
+  const h = itemMenuHandlers;
+  closeItemMenu();
+  if (h && h.onDelete) h.onDelete();
+});
+
+// Click-away, Escape, scrolling or resizing put the menu away.
+document.addEventListener('click', e => {
+  const menu = document.getElementById('item-menu');
+  if (!menu || menu.hidden) return;
+  if (e.target.closest('#item-menu') || e.target.closest('[data-msg-menu]') || e.target.closest('[data-class-menu]')) return;
+  closeItemMenu();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeItemMenu(); });
+document.getElementById('chat-window').addEventListener('scroll', closeItemMenu, true);
+window.addEventListener('resize', closeItemMenu);
+
+document.getElementById('chat-window').addEventListener('click', e => {
+  const btn = e.target.closest('[data-msg-menu]');
+  if (!btn) return;
+  e.stopPropagation();
+  const id = btn.dataset.msgMenu;
+  openItemMenu(btn, 'msg:' + id, { onEdit: () => openEditMessage(id), onDelete: () => deleteMessage(id) });
+});
+
+function openEditMessage(id) {
+  const m = currentMessages.find(x => x.id === id);
+  if (!m) return;
+  editingMessageId = id;
+  document.getElementById('em-text').value = m.text || '';
+  document.getElementById('em-error').hidden = true;
+  openModal('modal-edit-message');
+  // The dialog just opened, so focus lands inside it for typing.
+  setTimeout(() => { const ta = document.getElementById('em-text'); if (ta) ta.focus(); }, 30);
+}
+
+document.getElementById('em-save-btn').addEventListener('click', async () => {
+  const errorEl = document.getElementById('em-error');
+  const m = currentMessages.find(x => x.id === editingMessageId);
+  if (!m) { closeModal(); return; }
+  const text = document.getElementById('em-text').value.trim();
+  // An attachment-only message may keep the column empty, but a message
+  // with neither text nor a file would render as an empty bubble.
+  if (!text && !m.attachmentPath) {
+    errorEl.textContent = 'A message needs some text, or an attachment.';
+    errorEl.hidden = false;
+    return;
+  }
+
+  const btn = document.getElementById('em-save-btn');
+  const editedAt = new Date().toISOString();
+  btn.disabled = true;
+  const { error } = await sb.from('messages')
+    .update({ text, edited_at: editedAt })
+    .eq('id', editingMessageId);
+  btn.disabled = false;
+  if (error) {
+    errorEl.textContent = 'Could not save: ' + error.message;
+    errorEl.hidden = false;
+    return;
+  }
+  // Paint the change now rather than waiting for the realtime echo.
+  m.text = text;
+  m.editedAt = editedAt;
+  closeModal();
+  renderMessages(currentMessages, currentConversation);
+  showToast('Message updated.');
+});
+
+async function deleteMessage(id) {
+  const m = currentMessages.find(x => x.id === id);
+  if (!m) return;
+  if (!window.confirm('Delete this message? This cannot be undone.')) return;
+
+  const { error } = await sb.from('messages').delete().eq('id', id);
+  if (error) { showToast('Could not delete message: ' + error.message, 'error'); return; }
+  // The row points at the file, so drop the bytes too. Best effort: an
+  // orphaned object is harmless, a missing one is not.
+  if (m.attachmentPath) sb.storage.from(CHAT_BUCKET).remove([m.attachmentPath]).catch(() => {});
+  currentMessages = currentMessages.filter(x => x.id !== id);
+  renderMessages(currentMessages, currentConversation);
+  showToast('Message deleted.');
+}
+
+/* A message attachment is an inline image, an inline video, or a
+   plain file chip. The srcs start empty on purpose: the bucket is
+   private, so the signed URLs are fetched right after the list is
+   painted (hydrateAttachments) rather than blocking the render. */
+function messageAttachmentHTML(m) {
+  if (!m.attachmentPath) return '';
+  const name = escapeHTML(m.attachmentName || 'Attachment');
+  const meta = m.sizeBytes ? `${name} · ${formatBytes(m.sizeBytes)}` : name;
+  const path = escapeHTML(m.attachmentPath);
+  if ((m.mimeType || '').startsWith('image/')) {
+    return `<a class="msg__att msg__att--image" data-att-path="${path}" data-att-kind="image" data-att-name="${name}"><img data-att-src alt="${name}"><span class="msg__att-name">${meta}</span></a>`;
+  }
+  if ((m.mimeType || '').startsWith('video/')) {
+    return `<div class="msg__att msg__att--video" data-att-path="${path}" data-att-kind="video" data-att-name="${name}"><video data-att-src controls preload="metadata"></video><span class="msg__att-name">${meta}</span></div>`;
+  }
+  return `<button type="button" class="msg__att msg__att--file" data-att-path="${path}" data-att-kind="file" data-att-name="${name}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.67 3.67 0 1 1 5.18 5.18l-9.2 9.2a1.83 1.83 0 0 1-2.59-2.6l8.49-8.48" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="msg__att-name">${meta}</span></button>`;
+}
+
+// The bucket is private, so swap each placeholder for a 1-hour
+// signed URL. One batch request covers every attachment on screen.
+async function hydrateAttachments(msgBox, pinBottom) {
+  const els = msgBox.querySelectorAll('[data-att-path]');
+  if (!els.length) return;
+  const paths = Array.from(new Set(Array.from(els).map(el => el.dataset.attPath)));
+  const { data, error } = await sb.storage.from(CHAT_BUCKET).createSignedUrls(paths, 3600);
+  if (error) { console.error('SociaLearn: chat attachment link failed', error); return; }
+  const byPath = {};
+  (data || []).forEach(d => { if (d && d.signedUrl) byPath[d.path] = d.signedUrl; });
+  // An image or video only grows the bubble once it loads, so if the
+  // reader is pinned to the newest message, follow it down.
+  const loaded = [];
+  els.forEach(el => {
+    const url = byPath[el.dataset.attPath];
+    if (!url) return;
+    if (el.dataset.attKind === 'file') { el.dataset.attUrl = url; return; }
+    const media = el.querySelector('[data-att-src]');
+    if (!media) return;
+    media.src = url;
+    loaded.push(new Promise(resolve => {
+      media.addEventListener('load', resolve, { once: true });
+      media.addEventListener('loadedmetadata', resolve, { once: true });
+      media.addEventListener('error', resolve, { once: true });
+    }));
+    if (el.dataset.attKind === 'image') { el.href = url; el.target = '_blank'; el.rel = 'noopener'; }
+  });
+  if (pinBottom && loaded.length) {
+    Promise.all(loaded).then(() => { msgBox.scrollTop = msgBox.scrollHeight; });
+  }
+}
+
 function renderMessages(messages, conv) {
   const msgBox = document.getElementById('chat-messages');
   if (!msgBox) return;
+  // A repaint replaces the button the menu was anchored to, so put the
+  // menu away rather than leaving it floating over the new list.
+  closeItemMenu();
+  // Remember what is on screen so the "⋯" menu can find the message it
+  // was opened for without another round-trip.
+  currentMessages = messages;
+  currentConversation = conv;
   const wasAtBottom = msgBox.scrollHeight - msgBox.scrollTop - msgBox.clientHeight < 60;
+  const pinBottom = wasAtBottom || messages.length <= 1;
   msgBox.innerHTML = messages.map(m => {
     const mine = m.senderId === currentUser.uid;
     const sender = findUser(m.senderId);
-    return `<div class="msg ${mine ? 'mine' : 'theirs'}">${!mine && conv.type === 'group' ? `<strong style="display:block;font-size:.72rem;opacity:.8;margin-bottom:2px;">${escapeHTML(sender ? sender.name : '')}</strong>` : ''}${escapeHTML(m.text)}<span class="msg__time">${timeAgo(m.timestamp)}</span></div>`;
+    const body = (m.text ? `<span class="msg__text">${escapeHTML(m.text)}</span>` : '') + messageAttachmentHTML(m);
+    const actions = mine ? `
+      <div class="msg__actions">
+        <button type="button" class="msg__action" data-msg-menu="${m.id}" title="Message options" aria-label="Message options" aria-haspopup="menu"><svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="19" cy="12" r="1.7" fill="currentColor"/></svg></button>
+      </div>` : '';
+    const stamp = `${timeAgo(m.timestamp)}${m.editedAt ? ' · edited' : ''}`;
+    return `<div class="msg ${mine ? 'mine' : 'theirs'}">${!mine && conv.type === 'group' ? `<strong style="display:block;font-size:.72rem;opacity:.8;margin-bottom:2px;">${escapeHTML(sender ? sender.name : '')}</strong>` : ''}${body}<span class="msg__time">${stamp}</span>${actions}</div>`;
   }).join('');
   // Only auto-scroll if the reader was already at the bottom, so
   // scrolling back through history isn't yanked away.
   if (wasAtBottom || messages.length <= 1) msgBox.scrollTop = msgBox.scrollHeight;
+  hydrateAttachments(msgBox, pinBottom);
 }
 
-async function loadMessages(convId) {
+async function loadMessages(convId, fallbackConv) {
   const { data, error } = await sb.from('messages')
     .select('*')
     .eq('conversation_id', convId)
     .order('created_at');
   if (error) { console.error('SociaLearn: message load failed', error); return; }
-  const conv = db.conversations.find(c => c.id === convId);
-  if (!conv) return;
+  // A conversation opened moments ago may not be in the mirror yet —
+  // the realtime refresh that brings it back takes a beat. Bailing out
+  // here is what left a brand-new DM with a permanently empty window,
+  // so fall back to the conversation we already have on screen.
+  const conv = db.conversations.find(c => c.id === convId)
+    || fallbackConv
+    || { id: convId, type: convId.indexOf('group-') === 0 ? 'group' : 'dm' };
   renderMessages(data.map(mapMessage), conv);
 }
 
@@ -1704,19 +2056,23 @@ function renderChatWindow(convId, fallbackConv) {
   if (!conv) { win.innerHTML = `<div class="chat-window__empty"><p>Loading conversation…</p></div>`; return; }
 
   const name = conversationDisplayName(conv);
-  const sub = conv.type === 'group' ? `${conv.participantIds.length} members` : 'Direct message';
+  const sub = conv.type === 'group' ? `${(conv.participantIds || []).length} members` : 'Direct message';
 
   if (messageChannel) { sb.removeChannel(messageChannel); messageChannel = null; }
+  chatAttachedFile = null;
 
   win.innerHTML = `
     <div class="chat-window__head"><div><strong>${escapeHTML(name)}</strong><span>${sub}</span></div></div>
     <div class="chat-window__messages" id="chat-messages"></div>
+    <p class="chat-file-hint" id="chat-file-hint" hidden></p>
     <form class="chat-window__composer" id="chat-send-form">
+      <input type="file" id="chat-file-input" accept="image/*,video/*" hidden>
+      <button type="button" class="chat-attach-btn" id="chat-attach-btn" title="Attach a photo or video" aria-label="Attach a photo or video"><svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.67 3.67 0 1 1 5.18 5.18l-9.2 9.2a1.83 1.83 0 0 1-2.59-2.6l8.49-8.48" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <input type="text" id="chat-input" placeholder="Type a message…" autocomplete="off">
       <button type="submit">Send</button>
     </form>`;
 
-  loadMessages(convId);
+  loadMessages(convId, conv);
 
   // A per-conversation channel, so only this chat's new messages
   // trigger a re-read instead of the whole window reloading.
@@ -1726,21 +2082,74 @@ function renderChatWindow(convId, fallbackConv) {
       schema: 'public',
       table: 'messages',
       filter: 'conversation_id=eq.' + convId
-    }, () => loadMessages(convId))
+    }, () => loadMessages(convId, conv))
     .subscribe();
+
+  const fileInput = document.getElementById('chat-file-input');
+  const fileHint = document.getElementById('chat-file-hint');
+  const attachBtn = document.getElementById('chat-attach-btn');
+  const input = document.getElementById('chat-input');
+
+  attachBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0] || null;
+    chatAttachedFile = null;
+    if (!file) { fileHint.hidden = true; return; }
+    if (file.size > MAX_CHAT_BYTES) {
+      fileInput.value = '';
+      fileHint.textContent = `That file is ${formatBytes(file.size)} — the limit is ${formatBytes(MAX_CHAT_BYTES)}.`;
+      fileHint.hidden = false;
+      return;
+    }
+    chatAttachedFile = file;
+    fileHint.textContent = `Attached: ${file.name} · ${formatBytes(file.size)}`;
+    fileHint.hidden = false;
+  });
 
   document.getElementById('chat-send-form').addEventListener('submit', async e => {
     e.preventDefault();
-    const input = document.getElementById('chat-input');
     const text = input.value.trim();
-    if (!text) return;
+    const file = chatAttachedFile;
+    if (!text && !file) return;
+
     input.value = '';
-    const { error } = await sb.from('messages')
-      .insert({ conversation_id: convId, sender_id: currentUser.uid, text });
+    fileInput.value = '';
+    chatAttachedFile = null;
+    fileHint.hidden = true;
+
+    // The bytes go to Storage first, so a row never points at a file
+    // that isn't there.
+    let path = null;
+    if (file) {
+      path = `${convId}/${currentUser.uid}/${uniquePart()}-${safeFileName(file.name)}`;
+      const { error: uploadError } = await sb.storage.from(CHAT_BUCKET)
+        .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
+      if (uploadError) {
+        input.value = text;
+        chatAttachedFile = file;
+        showToast('Attachment failed: ' + uploadError.message, 'error');
+        return;
+      }
+    }
+
+    const { error } = await sb.from('messages').insert({
+      conversation_id: convId,
+      sender_id: currentUser.uid,
+      text,
+      attachment_path: path,
+      attachment_name: file ? file.name : null,
+      mime_type: file ? (file.type || null) : null,
+      size_bytes: file ? file.size : null
+    });
     if (error) {
       input.value = text;
+      if (path) sb.storage.from(CHAT_BUCKET).remove([path]).catch(() => {});
       showToast('Message failed: ' + error.message, 'error');
+      return;
     }
+    // Paint it now instead of waiting for the realtime echo.
+    loadMessages(convId, conv);
   });
 }
 
@@ -1773,31 +2182,63 @@ document.getElementById('dm-start-btn').addEventListener('click', async () => {
   if (!otherId) { errorEl.textContent = 'Pick someone to message.'; errorEl.hidden = false; return; }
 
   const convId = dmConvId(currentUser.uid, otherId);
+  const btn = document.getElementById('dm-start-btn');
+  btn.disabled = true;
+  errorEl.hidden = true;
+  try {
+    // This pair always maps to the same id, so a DM that already
+    // exists is opened again instead of failing to insert twice.
+    if (db.conversations.some(c => c.id === convId)) {
+      closeModal();
+      goToSection('chats');
+      openConversation(convId);
+      return;
+    }
 
-  // The id is derived from the pair of uids, so re-opening a DM
-  // that already exists is a no-op insert.
-  const { error: convErr } = await sb.from('conversations')
-    .insert({ id: convId, type: 'dm' });
-  if (convErr) {
-    errorEl.textContent = 'Failed to start chat: ' + convErr.message;
+    // 23505 (duplicate key) means the conversation row is already
+    // there — from an earlier session whose list has not loaded yet —
+    // which is exactly the state we want to end up in.
+    const { error: convErr } = await sb.from('conversations')
+      .insert({ id: convId, type: 'dm' });
+    if (convErr && convErr.code !== '23505') {
+      errorEl.textContent = 'Failed to start chat: ' + convErr.message;
+      errorEl.hidden = false;
+      return;
+    }
+
+    // Two separate inserts, and YOU first, on purpose. The participants
+    // policy lets a row through when user_id = auth.uid() OR when you
+    // are already in the conversation. The other person's row only
+    // satisfies the second clause, and rows written earlier in the same
+    // INSERT statement are not visible to that check — the old single
+    // two-row upsert therefore failed with
+    //   new row violates row-level security policy
+    // on every brand-new DM.
+    for (const uid of [currentUser.uid, otherId]) {
+      const { error: partErr } = await sb.from('conversation_participants')
+        .insert({ conversation_id: convId, user_id: uid });
+      if (partErr && partErr.code !== '23505') {
+        errorEl.textContent = 'Failed to start chat: ' + partErr.message;
+        errorEl.hidden = false;
+        return;
+      }
+    }
+
+    // Put it in the mirror straight away so the chat list and the
+    // message loader see it without waiting for realtime to catch up.
+    if (!db.conversations.some(c => c.id === convId)) {
+      db.conversations.push({ id: convId, type: 'dm', participantIds: [currentUser.uid, otherId] });
+    }
+
+    closeModal();
+    goToSection('chats');
+    openConversation(convId, { id: convId, type: 'dm', participantIds: [currentUser.uid, otherId] });
+  } catch (e) {
+    errorEl.textContent = 'Failed to start chat: ' + ((e && e.message) || e);
     errorEl.hidden = false;
-    return;
+  } finally {
+    btn.disabled = false;
   }
-
-  const { error: partErr } = await sb.from('conversation_participants')
-    .upsert([
-      { conversation_id: convId, user_id: currentUser.uid },
-      { conversation_id: convId, user_id: otherId }
-    ], { onConflict: 'conversation_id,user_id' });
-  if (partErr) {
-    errorEl.textContent = 'Failed to start chat: ' + partErr.message;
-    errorEl.hidden = false;
-    return;
-  }
-
-  closeModal();
-  goToSection('chats');
-  openConversation(convId, { id: convId, type: 'dm', participantIds: [currentUser.uid, otherId] });
 });
 
 /* ---------------------------------------------------------
@@ -1899,9 +2340,6 @@ function renderProfile() {
   document.getElementById('profile-classcount').textContent = myClasses().length;
   document.getElementById('profile-submitcount').textContent = db.submissions.filter(s => s.student_id === currentUser.uid).length;
   setAvatar(document.getElementById('profile-avatar'), u);
-  document.querySelectorAll('#role-switch-2 .role-switch__opt').forEach(btn => {
-    btn.classList.toggle('is-active', btn.dataset.role === activeView());
-  });
 }
 
 /* ---------------------------------------------------------
@@ -2183,13 +2621,6 @@ function renderChrome() {
   notifDot.textContent = notifUnreadCount > 99 ? '99+' : notifUnreadCount;
   notifDot.classList.toggle('icon-btn__dot--count', notifUnreadCount > 0);
 
-  document.querySelectorAll('.role-switch__opt').forEach(btn => {
-    // A student has nothing to switch to, so the option is not offered
-    // at all rather than shown and made to do nothing.
-    btn.hidden = btn.dataset.role === 'teacher' && !isTeacher();
-    btn.classList.toggle('is-active', btn.dataset.role === activeView());
-  });
-
   if (!document.getElementById('notif-panel').hidden) renderNotifList();
 }
 
@@ -2215,13 +2646,14 @@ function notifTitle(n) {
     case 'announcement': return 'New announcement';
     case 'assignment':   return 'New assignment';
     case 'submission':   return `${who} submitted work`;
+    case 'class_join':   return `${who} joined your class`;
     case 'like':         return `${who} liked your post`;
     case 'comment':      return `${who} commented on your post`;
     case 'message': {
       // A group chat shows the chat's own name; a direct message shows
       // whoever actually sent it.
       const conv = db.conversations.find(c => c.id === n.conversationId);
-      if (conv && conv.type === 'group') return conv.name || 'Group chat';
+      if (conv && conv.type === 'group') return conversationDisplayName(conv) || 'Group chat';
       return who;
     }
     default:             return 'Update';

@@ -439,6 +439,8 @@ a{ color: var(--primary-deep); }
 }
 .btn--ghost:hover{ background: rgba(255,255,255,.85); transform: translateY(-2px); box-shadow: var(--shadow-soft); }
 .btn--terracotta{ background: var(--orange); color: #fff; }
+.btn--danger{ color: #d64550; border-color: rgba(214,69,80,.32); }
+.btn--danger:hover{ background: rgba(214,69,80,.1); }
 .btn--sm{ padding: 7px 14px; font-size: .78rem; }
 .btn[disabled]{ opacity: .55; cursor: not-allowed; transform: none; box-shadow: none; }
 
@@ -702,6 +704,16 @@ input[type="date"]{ min-height: 44px; }
 }
 .class-card__footer{ display: flex; gap: 9px; padding: 0 20px 18px; }
 .class-card__footer .btn{ flex: 1; }
+/* The class "⋯" sits beside the two buttons, not stretched with them. */
+.class-card__menu{
+  flex: 0 0 auto; width: 38px; padding: 0; cursor: pointer;
+  display: grid; place-items: center;
+  border-radius: var(--r-pill);
+  background: rgba(255,255,255,.5); color: var(--ink);
+  border: 1px solid var(--glass-line);
+}
+.class-card__menu:hover{ background: rgba(255,255,255,.85); }
+.class-card__menu svg{ width: 16px; height: 16px; }
 
 /* the dashed tile that carries Create / Join */
 .class-cta{
@@ -860,7 +872,7 @@ input[type="date"]{ min-height: 44px; }
 .chat-window__head span{ font-size: .75rem; color: var(--faint); }
 .chat-window__messages{ flex: 1; overflow-y: auto; min-height: 0; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
 
-.msg{ max-width: 72%; padding: 10px 16px; font-size: .87rem; line-height: 1.45; border-radius: 20px; }
+.msg{ position: relative; max-width: 72%; padding: 10px 16px; font-size: .87rem; line-height: 1.45; border-radius: 20px; }
 .msg.mine{
   align-self: flex-end;
   background: var(--primary-grad); color: #fff;
@@ -876,6 +888,82 @@ input[type="date"]{ min-height: 44px; }
 }
 .msg__time{ display: block; font-size: .63rem; opacity: .72; margin-top: 4px; }
 
+/* The "⋯" on your own bubbles. It sits in the free space to the left
+   of a right-aligned bubble (right:100%), so it never covers the text
+   or moves the layout, and is always visible. */
+.msg__actions{
+  position: absolute; right: 100%; top: 50%; transform: translateY(-50%);
+  margin-right: 6px; display: flex; gap: 4px;
+}
+.msg__action{
+  width: 24px; height: 24px; padding: 0; cursor: pointer;
+  display: grid; place-items: center; border-radius: 50%;
+  border: 1px solid var(--glass-line); color: var(--ink);
+  background: rgba(255,255,255,.94);
+  box-shadow: 0 2px 6px rgba(0,0,0,.14);
+}
+.msg__action:hover{ background: #fff; }
+.msg__action svg{ width: 14px; height: 14px; }
+
+/* The Edit / Delete menu a "⋯" opens — shared by chat bubbles and class
+   cards. Fixed so it can sit next to the button without being clipped. */
+.item-menu{
+  position: fixed; z-index: 60;
+  min-width: 134px; padding: 5px;
+  background: rgba(255,255,255,.98);
+  border: 1px solid var(--glass-line); border-radius: 12px;
+  box-shadow: 0 14px 34px rgba(31,26,54,.2);
+}
+.item-menu__item{
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; border: none; border-radius: 8px;
+  background: none; cursor: pointer; text-align: left;
+  font: inherit; font-size: .82rem; color: var(--ink);
+}
+.item-menu__item:hover{ background: rgba(139,111,224,.12); }
+.item-menu__item svg{ width: 14px; height: 14px; flex-shrink: 0; }
+.item-menu__item--danger{ color: #d64550; }
+.item-menu__item--danger:hover{ background: rgba(214,69,80,.1); }
+/* On touch screens the bubbles take more width, so a floating "⋯" would
+   be clipped by the message list's horizontal overflow. Drop it into the
+   bubble's flow instead. */
+@media (hover: none){
+  .msg__actions{
+    position: static; transform: none; margin: 6px 0 0;
+    justify-content: flex-end;
+  }
+}
+
+/* Attachments inside a bubble. An image/video keeps the bubble's
+   rounded shape and never overflows it; a plain file is a chip. */
+.msg__att{ display: block; margin-top: 6px; color: inherit; text-decoration: none; }
+.msg__att:first-child{ margin-top: 0; }
+.msg__att-name{
+  display: block; font-size: .68rem; opacity: .8; margin-top: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;
+}
+.msg__att--image img,
+.msg__att--video video{
+  display: block; max-width: 260px; width: 100%; height: auto;
+  border-radius: 14px; background: rgba(0,0,0,.14);
+}
+.msg__att--image img{ cursor: zoom-in; }
+.msg__att--file{
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 13px; margin-top: 6px; cursor: pointer;
+  border-radius: 14px; font: inherit; font-size: .8rem;
+  background: rgba(0,0,0,.08); border: 1px solid rgba(0,0,0,.08);
+  color: inherit; max-width: 100%;
+}
+.msg.mine .msg__att--file{ background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.28); }
+.msg__att--file svg{ flex-shrink: 0; }
+.msg__att--file .msg__att-name{ margin-top: 0; }
+
+.chat-file-hint{
+  flex-shrink: 0; margin: 0; padding: 8px 18px 0;
+  font-size: .73rem; color: var(--muted);
+}
+
 .chat-window__composer{
   display: flex; gap: 10px; padding: 14px 18px;
   border-top: 1px solid var(--glass-seam); flex-shrink: 0;
@@ -889,6 +977,12 @@ input[type="date"]{ min-height: 44px; }
   transition: transform .2s ease, box-shadow .2s ease;
 }
 .chat-window__composer button:hover{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(139,111,224,.32); }
+.chat-window__composer .chat-attach-btn{
+  flex-shrink: 0; padding: 0 13px; background: transparent;
+  color: var(--muted); box-shadow: none;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.chat-window__composer .chat-attach-btn:hover{ transform: none; color: var(--primary, #8b6fe0); }
 
 /* =========================================================
    14. ANNOUNCEMENTS — bento, tall unread column + stacked right
@@ -1134,19 +1228,34 @@ input[type="date"]{ min-height: 44px; }
 .ad-meta{ font-size: .79rem; color: var(--muted); margin-bottom: 12px; }
 .submission-list{ display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
 .submission-row{
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  display: flex; flex-direction: column; gap: 11px;
   background: rgba(255,255,255,.6);
   border: 1px solid var(--glass-seam);
-  border-radius: var(--r-sm); padding: 11px 14px; font-size: .84rem;
+  border-radius: var(--r-sm); padding: 12px 14px; font-size: .84rem;
 }
+.submission-row__head{ display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .submission-row__info{ display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.submission-row__who{ font-weight: 600; color: var(--ink); }
+.submission-row__who{ font-weight: 600; color: var(--ink); font-size: .9rem; }
 .submission-row__file{
   color: var(--muted); font-size: .78rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .submission-row__nofile{ color: var(--faint); font-size: .76rem; white-space: nowrap; }
 .submission-row .btn{ flex-shrink: 0; }
+.submission-row__grade{ display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.submission-row__grade-label{ color: var(--muted); font-size: .8rem; }
+.grade__input{
+  width: 66px; padding: 6px 8px; font: inherit; font-size: .8rem;
+  color: var(--ink); background: rgba(255,255,255,.9);
+  border: 1px solid var(--glass-line); border-radius: var(--r-sm);
+}
+.grade__input:focus{ outline: 2px solid rgba(139,111,224,.4); outline-offset: 1px; }
+.grade__max{ color: var(--faint); font-size: .78rem; }
+/* The score a student sees once their work has been graded. */
+.ad-score{
+  font-weight: 600; color: var(--ink); font-size: .78rem;
+  background: rgba(139,111,224,.14); border-radius: 999px; padding: 2px 10px;
+}
 /* the student's own "already submitted" line, with its View file button */
 #ad-submitted{ display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 14px; }
 #ad-submitted[hidden]{ display: none; }

@@ -1,0 +1,211 @@
+﻿# SociaLearn Codebase Exploration Report
+Explored at: C:\appsdev_social_learning_hub
+
+## 1. Framework/Stack Used
+
+**Frontend:** Vanilla HTML, CSS, JavaScript (No framework - just plain web technologies)
+
+**Backend/Data:** Supabase (BaaS - Backend as a Service)
+- Authentication: Supabase Auth (email/password, Google OAuth)
+- Database: PostgreSQL (managed by Supabase)
+- Real-time: Supabase Realtime (postgres_changes subscriptions)
+- Storage: Supabase Storage (for file uploads: submissions, avatars, chat attachments)
+
+**Key files identified:**
+- package.json: Not present (no npm dependencies listed explicitly as files - using CDN for Supabase)
+- composer.json: Not present (PHP not used)
+- requirements.txt: Not present (Python not used)
+- supabase-config.js: Contains Supabase project URL and anon key (already configured)
+- index.html: Main UI (2600+ lines), includes Supabase JS SDK from CDN (v2)
+
+**Supabase SDK:** https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js
+
+**Styling:** Custom CSS in style.css, with Google Fonts (Poppins)
+## 2. How 'chats' are implemented
+
+### Database Tables (from supabase-schema.sql)
+- **conversations** (id: TEXT primary key, type: 'group'|'dm', class_id: uuid FK to classes, name: text, created_at)
+  - ID format: 'group-<classId>' for class group chats, 'dm-<sortedUids>' for direct messages (deterministic)
+- **conversation_participants** (conversation_id: TEXT FK, user_id: uuid FK, composite PK)
+- **messages** (id: uuid PK, conversation_id: TEXT FK, sender_id: uuid FK, text, attachment_path, attachment_name, mime_type, size_bytes, created_at)
+- **conversation_last_message** (VIEW with security_invoker - for chat list previews)
+- **notifications** (includes message type, conversation_id, actor_id for bell notifications)
+
+### Models (data mapping in script.js)
+- mapConversation(r) (line ~178-186 in script.js): Maps DB rows to UI shape with participantIds array
+- mapMessage(r) (line ~189-204): Maps messages with fields like conversationId, senderId, 	imestamp (mapped from created_at), attachment metadata
+
+### Controllers/Logic (script.js functions)
+- myConversations() (line ~1609-1617): Returns conversations user belongs to (groups for classes they're in, DMs they participate in)
+- conversationDisplayName(conv) (line ~1619-1624): Gets display name (group name or other participant's name)
+- groupConvId(classId) (line ~45): eturn 'group-' + classId
+- dmConvId(userA, userB) (line ~46): eturn 'dm-' + [userA,userB].sort().join('_')
+
+**Chat rendering:**
+- enderChatListOnly() (line ~1626-1651): Renders sidebar chat list with previews from chatPreviews (from conversation_last_message view)
+- enderChats() (line ~1653-1664): Main chats view renderer
+- openConversation(convId, fallbackConv) (line ~1666-1671): Opens a conversation, marks notifications read
+- markConversationNotificationsRead(convId) (line ~1673-1685): Marks message notifications as read
+- enderChatWindow(convId, fallbackConv) (line ~1842-1895): Renders conversation header, messages container, composer
+- enderMessages(messages, conv) (line ~1783-1807): Renders message bubbles, handles own vs others, group names for others
+- loadMessages(convId, fallbackConv) (line ~1809-1825): Loads messages from DB and renders
+- messageAttachmentHTML(m) (line ~1736-1756): Renders image/video/file attachments
+- hydrateAttachments(msgBox, pinBottom) (line ~1758-1781): Gets signed URLs for private attachments
+
+**Sending messages:**
+- sendMessage flow (line ~1895+ in the form submit handler around line ~1840-1910): Uploads attachment to Storage bucket 'chat-attachments' at path <conversationId>/<senderId>/<unique>-<filename>, then inserts message with attachment metadata
+**Starting DMs:**
+- #new-dm-btn click handler (line ~1912-1939): Opens modal with classmates from shared classes
+- #dm-start-btn click handler (line ~1941-2010): Creates conversation (if doesn't exist), adds participants (handling RLS edge cases), opens chat
+
+### Routes/Navigation
+- Navigation via goToSection('chats') and data-section-target buttons (line ~176, 178 in index.html nav)
+- Chat section: <section id="view-chats" data-view="chats"> (index.html line ~281)
+
+### Views/Components (index.html)
+- Chats view (index.html line ~281-305): 
+  - Left pane: .chat-list-col with #chat-list, #new-dm-btn, #chat-status
+  - Right pane: .chat-window with #chat-window (dynamically rendered)
+- Modal for new DM: #modal-new-dm (index.html ~511-525) with #dm-user-select, #dm-start-btn
+
+### Storage
+- Bucket: chat-attachments (private, 25MB limit)
+- Path pattern: <conversationId>/<senderId>/<unique>-<filename>
+- RLS policies in schema allow conversation members to read, sender to write/delete
+## 3. How 'classes' are implemented
+
+### Database Tables
+- **classes**: id (uuid PK), name, section, code (unique), teacher_id (FK to profiles), created_at
+- **class_members**: class_id (FK), student_id (FK), joined_at, composite PK (class_id, student_id)
+  - Note: Teacher is NOT in class_members; membership is via classes.teacher_id
+
+### Models/Helpers (script.js)
+- indClass(id) (line ~84-87 in script.js context)
+- myClasses() (line ~1522-1525): Returns all classes current user is member of (teaches or enrolled in)
+- myTaughtClasses() (line ~1527-1529): Classes where teacher_id == currentUser.uid
+- myJoinedClasses() (line ~1531-1534): Classes where in class_members as student
+
+**Class code generation:**
+- generateClassCode(name) (line ~130-135): Generates short codes like ABC-123 etc based on name
+
+### Controllers/Logic
+
+**Creating classes (teacher only):**
+- Button: #create-class-btn (index.html ~267, shown only to teachers)
+- Handler: line ~1235-1299 in script.js (#cc-submit click)
+  - Validates name/section
+  - Generates unique code (with retry on collision)
+  - Inserts into classes table via Supabase
+  - Creates group conversation: group-<classId> with name "Class - Section"
+  - Adds teacher as participant
+- RLS: Only teachers can insert classes (enforced by is_teacher() and policy)
+
+**Joining classes (student only):**
+- Button: #join-class-btn (shown only to students)
+- Uses RPC: join_class(p_code) (SECURITY DEFINER function in schema)
+  - Function checks code, enrolls student if not already, ensures group chat exists with teacher+student
+  - Returns JSON with class info and lready_joined flag
+- Handler: line ~1182-1213 (#join-submit) - calls sb.rpc('join_class', { p_code: codeRaw })
+- Also has ind_class_by_code RPC for looking up before joining
+
+### Views/Components
+- Classroom view: #view-classroom (index.html ~247-279)
+  - Header: "Classroom", subtitle changes based on role (teacher vs student)
+  - Buttons: #create-class-btn (New class), #join-class-btn (Join with code)
+  - Grid: #class-grid with class cards
+- Modals: #modal-create-class (line ~478-497 in index.html), #modal-join (line ~458-476)
+
+**Class cards show:**
+- Banner, class name, section, teacher (for students), member count, class code (for teachers)
+- Actions: "Group chat", "Assignments"
+
+### Rendering
+- enderClassroom() (line ~1053-1138 in script.js): Renders based on active view role (teacher/student). Shows taught classes or joined classes.
+## 4. Database Schema - Exact columns
+
+### chats-related tables
+
+**conversations**
+- id: text (PK) - e.g., 'group-<uuid>', 'dm-<uid1>_<uid2>'
+- type: text NOT NULL CHECK (type IN ('group','dm'))
+- class_id: uuid (FK -> classes.id ON DELETE CASCADE, NULL allowed for pure DMs though in this app groups tied to classes; DMs may have NULL class_id)
+- name: text NOT NULL DEFAULT ''
+- created_at: timestamptz NOT NULL DEFAULT now()
+
+**conversation_participants**
+- conversation_id: text NOT NULL (FK -> conversations.id ON DELETE CASCADE)
+- user_id: uuid NOT NULL (FK -> profiles.id ON DELETE CASCADE)
+- PRIMARY KEY (conversation_id, user_id)
+- Index on user_id
+
+**messages**
+- id: uuid PRIMARY KEY DEFAULT gen_random_uuid()
+- conversation_id: text NOT NULL (FK -> conversations.id ON DELETE CASCADE)
+- sender_id: uuid NOT NULL (FK -> profiles.id ON DELETE CASCADE)
+- text: text NOT NULL DEFAULT ''
+- attachment_path: text (nullable) - path in chat-attachments bucket
+- attachment_name: text (nullable)
+- mime_type: text (nullable)
+- size_bytes: bigint (nullable)
+- created_at: timestamptz NOT NULL DEFAULT now()
+- Index on (conversation_id, created_at)
+
+**conversation_last_message** (VIEW)
+- conversation_id: text
+- text: text (last message text)
+- created_at: timestamptz
+
+### classes-related tables
+
+**classes**
+- id: uuid PRIMARY KEY DEFAULT gen_random_uuid()
+- name: text NOT NULL
+- section: text NOT NULL
+- code: text NOT NULL UNIQUE
+- teacher_id: uuid NOT NULL (FK -> profiles.id ON DELETE CASCADE)
+- created_at: timestamptz NOT NULL DEFAULT now()
+- Indexes: (teacher_id), (code)
+
+**class_members**
+- class_id: uuid NOT NULL (FK -> classes.id ON DELETE CASCADE)
+- student_id: uuid NOT NULL (FK -> profiles.id ON DELETE CASCADE)
+- joined_at: timestamptz NOT NULL DEFAULT now()
+- PRIMARY KEY (class_id, student_id)
+- Index on (student_id)
+
+### Related tables (referenced by chats/classes)
+**profiles** (referenced by FK): id (uuid PK), name, username, initials, avatar_url, role ('teacher'|'student' NULL), created_at
+**posts**, **post_likes**, **comments** (for feed context)
+**assignments**, **submissions** (assignments tied to classes)
+**announcements**, **announcement_reads** (announcements tied to classes)
+**notifications** (has class_id, conversation_id, actor_id, etc.)
+## 5. Existing patterns for edit/delete features (follow conventions)
+
+Looking at the codebase, I see patterns for posts, comments, and other entities. Let me examine the actual implementation.
+
+### Example: Posts (create, like, comment - delete patterns visible)
+From script.js around post operations:
+- Create post: #post-form submit handler (line ~1027-1050) - inserts into posts table
+- Like/unlike: functions 	oggleLike(postId) (line ~971-999) - inserts/deletes from post_likes
+- Comment: ddComment(postId) (line ~1001-1025) - inserts into comments
+- Delete post: I see uthors delete own posts policy in schema; looking for UI handler...
+
+Also looking up how deletes work in UI. Let us search for delete patterns.
+
+### Example from the actual codebase - posts deletion?
+Looking through script.js more... Let us look up "delete" in the context of posts in the UI. Also looking at how posts are rendered.
+
+Also from schema: posts has policy "authors delete own posts" on DELETE. Let us look for delete button implementation. Let us look up renderFeed or post rendering.
+
+Also looking up comments - "authors delete own comments" policy exists.
+
+Looking in the actual rendered HTML for posts - maybe not shown, but the pattern is there. Also assignments have update/delete policies for teachers.
+
+Another example - profile editing:
+- Edit profile modal (#modal-edit-profile), save handler (#ep-save-btn click) updates profile (line ~153+ in script.js around profile update)
+
+But the user wants "edit/delete features elsewhere in the app (e.g., posts, comments) so we can follow conventions - show an example controller with edit/update/destroy and corresponding routes and frontend."
+
+Let us look up the actual patterns more concretely. Let us look up how posts are rendered - maybe we can find delete UI? Let us search for deletePost or remove patterns.
+
+Also looking up assignments - teachers can update/delete assignments (policies exist). Let us look up assignment management.
