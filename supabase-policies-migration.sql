@@ -169,11 +169,15 @@ create policy "teachers delete classes"
 --    There is deliberately NO insert policy. Enrolment only happens through
 --    join_class(), which checks the class code server-side. Adding one here would
 --    let any signed-in user add themselves to any class by guessing its UUID.
+--    Teachers may remove any student in their class; students may remove only
+--    their own enrolment (leave class).
 -- -----------------------------------------------------------------------------
 create policy "members read class_members"
   on public.class_members for select to authenticated using (is_class_member(class_id));
 create policy "teachers manage enrolment"
   on public.class_members for delete to authenticated using (is_class_teacher(class_id));
+create policy "students leave classes"
+  on public.class_members for delete to authenticated using (student_id = auth.uid());
 
 
 -- -----------------------------------------------------------------------------

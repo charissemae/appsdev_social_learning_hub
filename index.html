@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SociaLearn — Social Learning, Simplified.</title>
+<title>SociaLearn</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -260,7 +260,7 @@
       <div class="view-header">
         <div>
           <h1>Assignments</h1>
-          <p class="view-header__sub">Track what's due and what's done.</p>
+          <p class="view-header__sub">Track your deadlines and submissions.</p>
         </div>
         <div class="view-header__actions">
           <select id="assignment-filter">
@@ -269,8 +269,16 @@
           <button class="btn btn--primary" id="create-assignment-btn" hidden>New assignment</button>
         </div>
       </div>
-      <!-- Bento of cards, clustered and tinted by data-status. -->
-      <div class="assignment-list" id="assignment-list"></div>
+      <!-- Status tabs (student only): client-side filter over the loaded rows,
+           seated into the top edge of the table card below. -->
+      <div class="assignment-tabs" id="assignment-tabs" role="tablist" hidden>
+        <button type="button" class="assignment-tab is-active" data-assignment-tab="all" role="tab" aria-selected="true">All</button>
+        <button type="button" class="assignment-tab" data-assignment-tab="upcoming" role="tab" aria-selected="false">Upcoming</button>
+        <button type="button" class="assignment-tab" data-assignment-tab="due-soon" role="tab" aria-selected="false">Due soon</button>
+        <button type="button" class="assignment-tab" data-assignment-tab="missing" role="tab" aria-selected="false">Missing</button>
+        <button type="button" class="assignment-tab" data-assignment-tab="submitted" role="tab" aria-selected="false">Submitted</button>
+      </div>
+      <div class="assignment-list assignment-card" id="assignment-list"></div>
     </section>
 
     <!-- ---------- CHATS ---------- -->
@@ -306,18 +314,31 @@
           <button class="btn btn--primary" id="create-announcement-btn" hidden>New announcement</button>
         </div>
       </div>
-      <div class="announce-cols">
-        <div class="announce-col">
-          <h3>Unread announcements</h3>
-          <div class="announce-list" id="announce-unread"></div>
-        </div>
-        <div class="announce-col">
-          <h3>Upcoming deadlines</h3>
-          <div class="announce-list" id="announce-deadlines"></div>
-        </div>
-        <div class="announce-col">
-          <h3>Daily to-do</h3>
-          <div class="announce-list" id="announce-todo"></div>
+      <div class="announce-cols student-announce" id="student-announcements">
+        <section class="student-announce__section">
+          <h3>Latest announcements</h3>
+          <div class="student-announce-cards" id="student-announce-cards"></div>
+        </section>
+        <div class="student-announce-panels">
+          <section class="student-panel">
+            <div class="student-panel__head">
+              <h3>Tasks for today</h3>
+            </div>
+            <div id="student-tasks"></div>
+          </section>
+          <section class="student-panel">
+            <div class="student-timeline__head">
+              <div>
+                <h3>Deadline timeline</h3>
+                <span class="student-timeline__month" id="student-timeline-month"></span>
+              </div>
+              <div class="student-timeline__nav">
+                <button type="button" class="student-timeline__arrow" data-student-timeline-prev aria-label="Previous week">&lsaquo;</button>
+                <button type="button" class="student-timeline__arrow" data-student-timeline-next aria-label="Next week">&rsaquo;</button>
+              </div>
+            </div>
+            <div class="student-timeline" id="student-timeline"></div>
+          </section>
         </div>
       </div>
     </section>
@@ -330,9 +351,9 @@
         <p id="profile-username">—</p>
         <span class="chip" id="profile-role">Student</span>
 
-        <div class="profile-grid">
-          <div><span>Classes joined</span><strong id="profile-classcount">0</strong></div>
-          <div><span>Assignments submitted</span><strong id="profile-submitcount">0</strong></div>
+        <div class="profile-grid" id="profile-grid">
+          <div><span id="profile-classlabel">Classes joined</span><strong id="profile-classcount">0</strong></div>
+          <div id="profile-submit-stat"><span>Assignments submitted</span><strong id="profile-submitcount">0</strong></div>
         </div>
 
         <div class="profile-actions">
@@ -439,6 +460,13 @@
       <input type="text" id="cc-name" placeholder="e.g. Web Development">
       <label>Section</label>
       <input type="text" id="cc-section" placeholder="e.g. BSIT 3C">
+      <label>Background image (optional)</label>
+      <input type="file" id="cc-cover-input" class="class-cover-input" accept="image/png,image/jpeg,image/gif,image/webp">
+      <p class="field-hint">JPG, PNG, GIF or WebP — max 5 MB. Leave empty to use the automatic color.</p>
+      <div class="class-cover-preview" id="cc-cover-preview" hidden>
+        <img id="cc-cover-preview-img" alt="">
+        <button type="button" class="btn btn--ghost btn--sm" id="cc-cover-remove">Remove image</button>
+      </div>
       <p class="field-error" id="cc-error" hidden></p>
     </div>
     <div class="modal__foot">
@@ -448,7 +476,7 @@
   </div>
 
   <div class="modal" id="modal-assignment" hidden>
-    <div class="modal__head"><h2>New assignment</h2><button class="modal__close" data-close>&times;</button></div>
+    <div class="modal__head"><h2 id="a-modal-title">New assignment</h2><button class="modal__close" data-close>&times;</button></div>
     <div class="modal__body">
       <label>Class</label>
       <select id="a-class"></select>
@@ -572,12 +600,33 @@
       <input type="text" id="ec-name" placeholder="e.g. Web Development">
       <label>Section</label>
       <input type="text" id="ec-section" placeholder="e.g. BSIT 3C">
+      <label>Background image</label>
+      <input type="file" id="ec-cover-input" class="class-cover-input" accept="image/png,image/jpeg,image/gif,image/webp">
+      <p class="field-hint" id="ec-cover-hint"></p>
+      <div class="class-cover-preview" id="ec-cover-preview" hidden>
+        <img id="ec-cover-preview-img" alt="">
+        <button type="button" class="btn btn--ghost btn--sm" id="ec-cover-remove">Remove image</button>
+      </div>
       <p class="field-hint" id="ec-code-hint"></p>
       <p class="field-error" id="ec-error" hidden></p>
     </div>
     <div class="modal__foot">
       <button class="btn btn--ghost" data-close>Cancel</button>
       <button class="btn btn--primary" id="ec-save-btn">Save changes</button>
+    </div>
+  </div>
+
+  <div class="modal" id="modal-confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message" hidden>
+    <div class="modal__head">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <button type="button" class="modal__close" id="confirm-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal__body">
+      <p class="modal__intro" id="confirm-message"></p>
+    </div>
+    <div class="modal__foot">
+      <button type="button" class="btn btn--ghost" id="confirm-cancel">Cancel</button>
+      <button type="button" class="btn btn--danger" id="confirm-ok">Delete</button>
     </div>
   </div>
 
@@ -598,6 +647,10 @@
   <button type="button" class="item-menu__item item-menu__item--danger" id="item-menu-del" role="menuitem">
     <svg viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
     Delete
+  </button>
+  <button type="button" class="item-menu__item item-menu__item--danger" id="item-menu-leave" role="menuitem" hidden>
+    <svg viewBox="0 0 24 24" fill="none"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="m16 17 5-5-5-5M21 12H9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Leave class
   </button>
 </div>
 

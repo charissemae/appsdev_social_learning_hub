@@ -882,10 +882,42 @@ function closeModal() {
 function roleModalIsOpen() {
   return !document.getElementById('modal-role').hidden;
 }
+
+let confirmResolve = null;
+
+function confirmAction({ title, message, confirmLabel = 'Delete' }) {
+  return new Promise(resolve => {
+    if (confirmResolve) confirmResolve(false);
+    confirmResolve = resolve;
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-message').textContent = message;
+    const ok = document.getElementById('confirm-ok');
+    ok.textContent = confirmLabel;
+    openModal('modal-confirm');
+    ok.focus();
+  });
+}
+
+function settleConfirm(result) {
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  closeModal();
+  if (resolve) resolve(result);
+}
+
 document.getElementById('modal-backdrop').addEventListener('click', e => {
-  if (e.target.id === 'modal-backdrop' && !roleModalIsOpen()) closeModal();
+  if (e.target.id === 'modal-backdrop' && !roleModalIsOpen()) {
+    if (!document.getElementById('modal-confirm').hidden) { settleConfirm(false); return; }
+    closeModal();
+  }
 });
 document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', closeModal));
+document.getElementById('confirm-close').addEventListener('click', () => settleConfirm(false));
+document.getElementById('confirm-cancel').addEventListener('click', () => settleConfirm(false));
+document.getElementById('confirm-ok').addEventListener('click', () => settleConfirm(true));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('modal-confirm').hidden) settleConfirm(false);
+});
 
 /* ---------------------------------------------------------
    11. FEED
@@ -1034,6 +1066,70 @@ document.getElementById('post-submit').addEventListener('click', async () => {
 /* ---------------------------------------------------------
    12. CLASSROOM
    --------------------------------------------------------- */
+const CLASS_COVER_BUCKET = 'class-backgrounds';
+const MAX_CLASS_COVER_BYTES = 5 * 1024 * 1024;
+let ccCoverFile = null;
+let ecCoverFile = null;
+let ecRemoveCover = false;
+
+function classCoverPathFromUrl(url) {
+  const marker = `/${CLASS_COVER_BUCKET}/`;
+  const i = (url || '').indexOf(marker);
+  if (i === -1) return null;
+  try {
+    return decodeURIComponent(url.slice(i + marker.length).split('?')[0]);
+  } catch (_) {
+    return null;
+  }
+}
+
+function setClassCoverPreview(prefix, src) {
+  const wrap = document.getElementById(prefix + '-cover-preview');
+  const img = document.getElementById(prefix + '-cover-preview-img');
+  if (!wrap || !img) return;
+  if (src) {
+    img.src = src;
+    wrap.hidden = false;
+  } else {
+    img.removeAttribute('src');
+    wrap.hidden = true;
+  }
+}
+
+function validateClassCover(file, input, errorEl) {
+  if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+    input.value = '';
+    errorEl.textContent = 'Please choose an image file (JPG, PNG, GIF, or WebP).';
+    errorEl.hidden = false;
+    return false;
+  }
+  if (file.size > MAX_CLASS_COVER_BYTES) {
+    input.value = '';
+    errorEl.textContent = `That image is ${formatBytes(file.size)} — the limit is ${formatBytes(MAX_CLASS_COVER_BYTES)}.`;
+    errorEl.hidden = false;
+    return false;
+  }
+  return true;
+}
+
+async function uploadClassCover(file) {
+  const path = `${currentUser.uid}/${uniquePart()}-${safeFileName(file.name)}`;
+  const { error } = await sb.storage.from(CLASS_COVER_BUCKET)
+    .upload(path, file, { contentType: file.type || 'image/jpeg', upsert: false });
+  if (error) throw error;
+  return {
+    path,
+    url: sb.storage.from(CLASS_COVER_BUCKET).getPublicUrl(path).data.publicUrl
+  };
+}
+
+function classBannerMarkup(c) {
+  const attrs = c.background_url
+    ? ` class="class-card__banner class-card__banner--image" style="background-image:url('${escapeHTML(c.background_url)}');background-size:cover;background-position:center;background-repeat:no-repeat;background-color:var(--lavender)"`
+    : ' class="class-card__banner"';
+  return `<div${attrs}><svg viewBox="0 0 24 24" width="30" height="30" fill="none"><path d="M22 10 12 5 2 10l10 5 10-5z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 12.2V17c0 1.66 2.69 3 6 3s6-1.34 6-3v-4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
+}
+
 function renderClassroom() {
   const grid = document.getElementById('class-grid');
   // A repaint replaces the button the menu was anchored to, so put the
@@ -1049,6 +1145,8 @@ function renderClassroom() {
   document.getElementById('create-class-btn').hidden = !teaching;
   document.getElementById('join-class-btn').hidden = teaching || !canJoin;
   document.getElementById('classroom-sub').textContent = teaching ? 'Classes you are teaching.' : 'Your enrolled classes, all in one place.';
+  const classCta = document.querySelector('#view-classroom .class-cta');
+  if (classCta) classCta.style.order = '-1';
 
   const list = teaching ? myTaughtClasses() : myJoinedClasses();
 
@@ -1068,7 +1166,7 @@ function renderClassroom() {
     if (teaching) {
       return `
       <div class="class-card">
-        <div class="class-card__banner"><svg viewBox="0 0 24 24" width="30" height="30" fill="none"><path d="M22 10 12 5 2 10l10 5 10-5z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 12.2V17c0 1.66 2.69 3 6 3s6-1.34 6-3v-4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        ${classBannerMarkup(c)}
         <div class="class-card__body">
           <span class="class-card__name">${escapeHTML(c.name)}</span>
           <span class="class-card__section">${escapeHTML(c.section)}</span>
@@ -1084,7 +1182,7 @@ function renderClassroom() {
     const teacher = findUser(c.teacher_id);
     return `
       <div class="class-card">
-        <div class="class-card__banner"><svg viewBox="0 0 24 24" width="30" height="30" fill="none"><path d="M22 10 12 5 2 10l10 5 10-5z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 12.2V17c0 1.66 2.69 3 6 3s6-1.34 6-3v-4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        ${classBannerMarkup(c)}
         <div class="class-card__body">
           <span class="class-card__name">${escapeHTML(c.name)}</span>
           <span class="class-card__section">${escapeHTML(c.section)} · ${teacher ? escapeHTML(teacher.name) : ''}</span>
@@ -1093,6 +1191,7 @@ function renderClassroom() {
         <div class="class-card__footer">
           <button class="btn btn--ghost btn--sm" data-open-chat-class="${c.id}">Group chat</button>
           <button class="btn btn--ghost btn--sm" data-view-assignments-class="${c.id}">Assignments</button>
+          <button type="button" class="class-card__menu" data-class-menu="${c.id}" title="Class options" aria-label="Class options" aria-haspopup="menu"><svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="19" cy="12" r="1.7" fill="currentColor"/></svg></button>
         </div>
       </div>`;
   }).join('');
@@ -1117,7 +1216,11 @@ document.getElementById('class-grid').addEventListener('click', e => {
   if (menuBtn) {
     e.stopPropagation();
     const id = menuBtn.dataset.classMenu;
-    openItemMenu(menuBtn, 'class:' + id, { onEdit: () => openEditClass(id), onDelete: () => deleteClass(id) });
+    if (isTeacherOf(id)) {
+      openItemMenu(menuBtn, 'class:' + id, { onEdit: () => openEditClass(id), onDelete: () => deleteClass(id) });
+    } else {
+      openItemMenu(menuBtn, 'class:' + id, { onLeave: () => leaveClass(id) });
+    }
   }
 });
 
@@ -1127,12 +1230,52 @@ function openEditClass(id) {
   const c = findClass(id);
   if (!c) return;
   editingClassId = id;
+  ecCoverFile = null;
+  ecRemoveCover = false;
   document.getElementById('ec-name').value = c.name || '';
   document.getElementById('ec-section').value = c.section || '';
+  document.getElementById('ec-cover-input').value = '';
+  document.getElementById('ec-cover-hint').textContent = c.background_url
+    ? 'Choose a new image to replace the current one, or remove it to use the automatic color.'
+    : 'Optional. Leave empty to use the automatic color.';
+  setClassCoverPreview('ec', c.background_url || '');
   document.getElementById('ec-code-hint').textContent = `Students join with the code ${c.code} — it stays the same when you rename the class.`;
   document.getElementById('ec-error').hidden = true;
   openModal('modal-edit-class');
 }
+
+document.getElementById('ec-cover-input').addEventListener('change', e => {
+  const file = e.target.files[0] || null;
+  const errorEl = document.getElementById('ec-error');
+  errorEl.hidden = true;
+  ecCoverFile = null;
+  ecRemoveCover = false;
+  if (!file) return;
+  if (!validateClassCover(file, e.target, errorEl)) {
+    const current = findClass(editingClassId);
+    setClassCoverPreview('ec', current && current.background_url ? current.background_url : '');
+    document.getElementById('ec-cover-hint').textContent = current && current.background_url
+      ? 'Choose a new image to replace the current one, or remove it to use the automatic color.'
+      : 'Optional. Leave empty to use the automatic color.';
+    return;
+  }
+  ecCoverFile = file;
+  document.getElementById('ec-cover-hint').textContent = 'New image selected. Save changes to apply it.';
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (ecCoverFile === file) setClassCoverPreview('ec', reader.result);
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('ec-cover-remove').addEventListener('click', () => {
+  ecCoverFile = null;
+  ecRemoveCover = true;
+  document.getElementById('ec-cover-input').value = '';
+  document.getElementById('ec-error').hidden = true;
+  setClassCoverPreview('ec', '');
+  document.getElementById('ec-cover-hint').textContent = 'The automatic color will be used.';
+});
 
 document.getElementById('ec-save-btn').addEventListener('click', async () => {
   const name = document.getElementById('ec-name').value.trim();
@@ -1145,25 +1288,60 @@ document.getElementById('ec-save-btn').addEventListener('click', async () => {
   }
 
   const btn = document.getElementById('ec-save-btn');
+  const label = btn.textContent;
   btn.disabled = true;
-  // No .select() on the update: RETURNING would re-apply the SELECT
-  // policy to the row and 42501 for no useful reason (see cc-submit).
-  const { error } = await sb.from('classes')
-    .update({ name, section })
-    .eq('id', editingClassId);
-  btn.disabled = false;
-  if (error) {
-    errorEl.textContent = 'Could not save: ' + error.message;
-    errorEl.hidden = false;
-    return;
-  }
-  // Mirror the change so the card and every chat title update at once —
-  // conversationDisplayName() reads the class, not the stored chat name.
+  btn.textContent = 'Saving…';
+  errorEl.hidden = true;
+
   const c = findClass(editingClassId);
-  if (c) { c.name = name; c.section = section; }
-  closeModal();
-  showToast('Class updated.');
-  renderAll();
+  const oldCoverUrl = c ? c.background_url : '';
+  let newCoverUrl = null; // null keeps the current image
+  let uploadedPath = null;
+
+  try {
+    if (ecCoverFile) {
+      const uploaded = await uploadClassCover(ecCoverFile);
+      uploadedPath = uploaded.path;
+      newCoverUrl = uploaded.url;
+    } else if (ecRemoveCover) {
+      newCoverUrl = '';
+    }
+
+    const patch = { name, section };
+    if (newCoverUrl !== null) patch.background_url = newCoverUrl;
+
+    // No .select() on the update: RETURNING would re-apply the SELECT
+    // policy to the row and 42501 for no useful reason (see cc-submit).
+    const { error } = await sb.from('classes')
+      .update(patch)
+      .eq('id', editingClassId);
+    if (error) throw error;
+    uploadedPath = null; // the row now points at it; never clean it up as a failure
+
+    // Drop the old image only after the row points somewhere else.
+    if (newCoverUrl !== null && oldCoverUrl && oldCoverUrl !== newCoverUrl) {
+      const oldPath = classCoverPathFromUrl(oldCoverUrl);
+      if (oldPath) sb.storage.from(CLASS_COVER_BUCKET).remove([oldPath]).catch(() => {});
+    }
+
+    // Mirror the change so the card and every chat title update at once —
+    // conversationDisplayName() reads the class, not the stored chat name.
+    if (c) {
+      c.name = name;
+      c.section = section;
+      if (newCoverUrl !== null) c.background_url = newCoverUrl;
+    }
+    closeModal();
+    showToast('Class updated.');
+    renderAll();
+  } catch (err) {
+    if (uploadedPath) sb.storage.from(CLASS_COVER_BUCKET).remove([uploadedPath]).catch(() => {});
+    errorEl.textContent = 'Could not save: ' + (err.message || 'unknown error');
+    errorEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 });
 
 async function deleteClass(id) {
@@ -1171,13 +1349,18 @@ async function deleteClass(id) {
   if (!c) return;
   // Deleting the row cascades: its group chat and messages, assignments,
   // announcements and posts all go with it. Say so before it happens.
-  const ok = window.confirm(
-    `Delete "${c.name} — ${c.section}"?\n\nThis also removes its group chat, assignments, announcements and posts. This cannot be undone.`
-  );
+  const ok = await confirmAction({
+    title: `Delete "${c.name} — ${c.section}"?`,
+    message: 'This also removes its group chat, assignments, announcements and posts. This cannot be undone.',
+    confirmLabel: 'Delete class'
+  });
   if (!ok) return;
 
   const { error } = await sb.from('classes').delete().eq('id', id);
   if (error) { showToast('Could not delete class: ' + error.message, 'error'); return; }
+
+  const coverPath = classCoverPathFromUrl(c.background_url);
+  if (coverPath) sb.storage.from(CLASS_COVER_BUCKET).remove([coverPath]).catch(() => {});
 
   // Drop it from the mirror right away, before realtime catches up, so
   // the card disappears on click. Re-read everything it cascaded into.
@@ -1189,6 +1372,50 @@ async function deleteClass(id) {
     currentConversation = null;
   }
   showToast('Class deleted.');
+  loadCollections(['classes', 'conversations', 'assignments', 'announcements', 'posts']);
+}
+
+async function leaveClass(id) {
+  const c = findClass(id);
+  if (!c) return;
+  const ok = await confirmAction({
+    title: `Leave "${c.name} — ${c.section}"?`,
+    message: 'You will lose access to its group chat, assignments and announcements.',
+    confirmLabel: 'Leave class'
+  });
+  if (!ok) return;
+
+  const { error } = await sb.from('class_members')
+    .delete()
+    .eq('class_id', id)
+    .eq('student_id', currentUser.uid);
+  if (error) {
+    showToast('Could not leave class: ' + error.message, 'error');
+    return;
+  }
+
+  const convId = groupConvId(id);
+  const { error: chatError } = await sb.from('conversation_participants')
+    .delete()
+    .eq('conversation_id', convId)
+    .eq('user_id', currentUser.uid);
+
+  c.studentIds = c.studentIds.filter(studentId => studentId !== currentUser.uid);
+  const conversation = db.conversations.find(conv => conv.id === convId);
+  if (conversation) {
+    conversation.participantIds = (conversation.participantIds || []).filter(userId => userId !== currentUser.uid);
+  }
+  if (activeConversationId === convId) {
+    activeConversationId = null;
+    currentMessages = [];
+    currentConversation = null;
+  }
+  renderAll();
+  if (chatError) {
+    showToast('Left the class, but could not leave its group chat: ' + chatError.message, 'error');
+  } else {
+    showToast(`You left ${c.name}.`);
+  }
   loadCollections(['classes', 'conversations', 'assignments', 'announcements', 'posts']);
 }
 
@@ -1226,10 +1453,38 @@ document.getElementById('join-submit').addEventListener('click', async () => {
 });
 
 document.getElementById('create-class-btn').addEventListener('click', () => {
+  ccCoverFile = null;
   document.getElementById('cc-name').value = '';
   document.getElementById('cc-section').value = '';
+  document.getElementById('cc-cover-input').value = '';
+  setClassCoverPreview('cc', '');
   document.getElementById('cc-error').hidden = true;
   openModal('modal-create-class');
+});
+
+document.getElementById('cc-cover-input').addEventListener('change', e => {
+  const file = e.target.files[0] || null;
+  const errorEl = document.getElementById('cc-error');
+  errorEl.hidden = true;
+  ccCoverFile = null;
+  if (!file) return;
+  if (!validateClassCover(file, e.target, errorEl)) {
+    setClassCoverPreview('cc', '');
+    return;
+  }
+  ccCoverFile = file;
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (ccCoverFile === file) setClassCoverPreview('cc', reader.result);
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('cc-cover-remove').addEventListener('click', () => {
+  ccCoverFile = null;
+  document.getElementById('cc-cover-input').value = '';
+  document.getElementById('cc-error').hidden = true;
+  setClassCoverPreview('cc', '');
 });
 
 document.getElementById('cc-submit').addEventListener('click', async () => {
@@ -1244,7 +1499,16 @@ document.getElementById('cc-submit').addEventListener('click', async () => {
   // a double-click otherwise creates two classes and two group chats out of one
   // filled-in form.
   btn.disabled = true;
+  let coverPath = null;
+  let coverUrl = '';
+  let classCreated = false;
   try {
+    if (ccCoverFile) {
+      const uploaded = await uploadClassCover(ccCoverFile);
+      coverPath = uploaded.path;
+      coverUrl = uploaded.url;
+    }
+
     // `code` is UNIQUE, and db.classes only holds this teacher's own classes —
     // the classes policy hides everyone else's — so the local check is a
     // courtesy, not a guarantee. Only the index is authoritative, and a real
@@ -1265,9 +1529,11 @@ document.getElementById('cc-submit').addEventListener('click', async () => {
       // and rolled the insert back. Every teacher, every time — the one
       // error message in this file that named a policy instead of
       // anything the reader could act on.
-      const ins = await sb.from('classes')
-        .insert({ name, section, code, teacher_id: currentUser.uid });
+      const payload = { name, section, code, teacher_id: currentUser.uid };
+      if (coverUrl) payload.background_url = coverUrl;
+      const ins = await sb.from('classes').insert(payload);
       error = ins.error;
+      if (!error) classCreated = true;
 
       if (!error) {
         // The class exists now, so it is a committed row that the SELECT
@@ -1314,6 +1580,9 @@ document.getElementById('cc-submit').addEventListener('click', async () => {
     errorEl.textContent = 'Failed to create class: ' + ((e && e.message) || e);
     errorEl.hidden = false;
   } finally {
+    if (coverPath && !classCreated) {
+      sb.storage.from(CLASS_COVER_BUCKET).remove([coverPath]).catch(() => {});
+    }
     btn.disabled = false;
   }
 });
@@ -1378,9 +1647,20 @@ async function openSubmissionFile(submissionId, btn) {
   }
 }
 
+// Client-only status filter, shared by teacher and student views. It
+// never touches the data load or the status calculation — it just
+// hides rows already in the mirror.
+let assignmentTab = 'all';
+
 function renderAssignments() {
   const teaching = isTeaching();
   document.getElementById('create-assignment-btn').hidden = !teaching;
+
+  if (teaching && typeof renderTeacherAssignments === 'function') {
+    renderTeacherAssignments();
+    return;
+  }
+  if (typeof resetTeacherAssignmentsUI === 'function') resetTeacherAssignmentsUI();
 
   const classes = teaching ? myTaughtClasses() : myJoinedClasses();
   const filterSelect = document.getElementById('assignment-filter');
@@ -1393,39 +1673,75 @@ function renderAssignments() {
   if (filterSelect.value !== 'all') assignments = assignments.filter(a => a.class_id === filterSelect.value);
   assignments = assignments.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
 
-  const list = document.getElementById('assignment-list');
-  if (assignments.length === 0) { list.innerHTML = `<div class="empty-state"><p>No assignments available.</p></div>`; return; }
+  const tabs = document.getElementById('assignment-tabs');
+  if (tabs) tabs.hidden = false;
 
-  list.innerHTML = assignments.map(a => {
+  // Same view for teacher and student. Status + Points come from the
+  // current user's own submission, so a teacher (who has none) simply
+  // sees the deadline-derived status and an empty score.
+  const shown = assignmentTab === 'all'
+    ? assignments
+    : assignments.filter(a => getAssignmentStatus(a, currentUser.uid) === assignmentTab);
+
+  const list = document.getElementById('assignment-list');
+  const rows = shown.map(a => {
     const cls = findClass(a.class_id);
     if (!cls) return '';
-    if (teaching) {
-      const count = db.submissions.filter(s => s.assignmentId === a.id).length;
-      const total = cls.studentIds.length;
-return `
-      <div class="assignment-row" data-assignment="${a.id}" data-role="teacher">
-        <div class="assignment-row__icon"><svg viewBox="0 0 24 24" width="21" height="21" fill="none"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 3v4a2 2 0 0 0 2 2h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div class="assignment-row__main">
-          <div class="assignment-row__title">${escapeHTML(a.title)}</div>
-          <div class="assignment-row__sub">${escapeHTML(cls.name)} · Due ${formatDeadline(a.deadline)}</div>
-        </div>
-        <span class="assignment-row__points">${count}/${total} submitted</span>
-      </div>`;
-    }
     const status = getAssignmentStatus(a, currentUser.uid);
+    const sub = findSubmission(a.id, currentUser.uid);
+    const score = (sub && sub.score !== null && sub.score !== undefined) ? sub.score : '—';
+    // Teacher: how many submitted / how many enrolled. Student: own score / max.
+    const points = teaching
+      ? `${db.submissions.filter(s => s.assignmentId === a.id).length} / ${cls.studentIds.length}`
+      : (a.points ? `${score} / ${a.points}` : '—');
+    const action = teaching ? 'View' : (status === 'submitted' ? 'View' : 'Submit');
     return `
-      <div class="assignment-row" data-assignment="${a.id}" data-status="${status}">
-        <div class="assignment-row__icon"><svg viewBox="0 0 24 24" width="21" height="21" fill="none"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 3v4a2 2 0 0 0 2 2h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div class="assignment-row__main">
-          <div class="assignment-row__title">${escapeHTML(a.title)}</div>
-          <div class="assignment-row__sub">${escapeHTML(cls.name)} · Due ${formatDeadline(a.deadline)}${a.points ? ' · ' + a.points + ' pts' : ''}</div>
-        </div>
-        <span class="status ${STATUS_CLASS[status]}">${STATUS_LABEL[status]}</span>
-      </div>`;
+      <tr class="assignment-row assignment-table__row" data-assignment="${a.id}" data-status="${status}">
+        <td class="assignment-cell assignment-cell--title" data-label="Assignment"><span class="assignment-row__title">${escapeHTML(a.title)}</span></td>
+        <td class="assignment-cell" data-label="Class">${escapeHTML(cls.name)}</td>
+        <td class="assignment-cell" data-label="Deadline">${escapeHTML(formatDeadline(a.deadline))}</td>
+        <td class="assignment-cell" data-label="Points">${escapeHTML(String(points))}</td>
+        <td class="assignment-cell" data-label="Status"><span class="status ${STATUS_CLASS[status]}">${STATUS_LABEL[status]}</span></td>
+        <td class="assignment-cell assignment-cell--action" data-label="Action"><button type="button" class="btn btn--ghost btn--sm">${action}</button></td>
+      </tr>`;
   }).join('');
+
+  if (!rows || rows.trim() === '') {
+    const msg = assignmentTab === 'all' ? 'No assignments available.' : 'No assignments in this tab.';
+    list.innerHTML = `<div class="empty-state"><p>${escapeHTML(msg)}</p></div>`;
+    return;
+  }
+
+  list.innerHTML = `
+    <div class="assignment-table__scroll">
+      <table class="assignment-table">
+        <thead>
+          <tr>
+            <th>Assignment</th>
+            <th>Class</th>
+            <th>Deadline</th>
+            <th>Points</th>
+            <th>Status</th>
+            <th class="assignment-table__th--action">Action</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 document.getElementById('assignment-filter').addEventListener('change', renderAssignments);
+document.getElementById('assignment-tabs').addEventListener('click', e => {
+  const tab = e.target.closest('[data-assignment-tab]');
+  if (!tab) return;
+  assignmentTab = tab.dataset.assignmentTab;
+  document.querySelectorAll('#assignment-tabs .assignment-tab').forEach(t => {
+    const on = t === tab;
+    t.classList.toggle('is-active', on);
+    t.setAttribute('aria-selected', String(on));
+  });
+  renderAssignments();
+});
 document.getElementById('assignment-list').addEventListener('click', e => {
   const row = e.target.closest('[data-assignment]');
   if (row) openAssignmentDetail(row.dataset.assignment);
@@ -1680,16 +1996,31 @@ document.getElementById('ad-submit-btn').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('create-assignment-btn').addEventListener('click', () => {
+let editingAssignmentId = null;
+
+function openAssignmentForm(assignment) {
+  editingAssignmentId = assignment ? assignment.id : null;
   const select = document.getElementById('a-class');
   select.innerHTML = myTaughtClasses().map(c => `<option value="${c.id}">${escapeHTML(c.name)} (${escapeHTML(c.section)})</option>`).join('');
-  document.getElementById('a-title').value = '';
-  document.getElementById('a-instructions').value = '';
-  document.getElementById('a-deadline').value = daysFromNow(7);
-  document.getElementById('a-points').value = '';
+  select.disabled = !!assignment;
+  if (assignment) select.value = assignment.class_id;
+  document.getElementById('a-modal-title').textContent = assignment ? 'Edit assignment' : 'New assignment';
+  document.getElementById('a-submit').textContent = assignment ? 'Save changes' : 'Create assignment';
+  document.getElementById('a-title').value = assignment ? assignment.title : '';
+  document.getElementById('a-instructions').value = assignment ? (assignment.instructions || '') : '';
+  document.getElementById('a-deadline').value = assignment ? assignment.deadline : daysFromNow(7);
+  document.getElementById('a-points').value = assignment && assignment.points !== null && assignment.points !== undefined ? assignment.points : '';
   document.getElementById('a-error').hidden = true;
   openModal('modal-assignment');
-});
+}
+
+function openEditAssignment(id) {
+  const assignment = db.assignments.find(a => a.id === id);
+  if (!assignment || !isTeacherOf(assignment.class_id)) return;
+  openAssignmentForm(assignment);
+}
+
+document.getElementById('create-assignment-btn').addEventListener('click', () => openAssignmentForm(null));
 
 document.getElementById('a-submit').addEventListener('click', async () => {
   const classId = document.getElementById('a-class').value;
@@ -1702,20 +2033,36 @@ document.getElementById('a-submit').addEventListener('click', async () => {
   if (!title) { errorEl.textContent = 'Please give the assignment a title.'; errorEl.hidden = false; return; }
   if (!deadline) { errorEl.textContent = 'Please set a deadline.'; errorEl.hidden = false; return; }
 
-  const { error } = await sb.from('assignments').insert({
-    class_id: classId,
+  const assignmentId = editingAssignmentId;
+  const payload = {
     title,
     instructions,
     deadline,
     points: points ? Number(points) : null
-  });
+  };
+  let error;
+  if (assignmentId) {
+    ({ error } = await sb.from('assignments').update(payload).eq('id', assignmentId));
+  } else {
+    ({ error } = await sb.from('assignments').insert({ class_id: classId, ...payload }));
+  }
   if (error) {
-    errorEl.textContent = 'Failed to create assignment: ' + error.message;
+    errorEl.textContent = 'Failed to ' + (assignmentId ? 'update' : 'create') + ' assignment: ' + error.message;
     errorEl.hidden = false;
     return;
   }
+  if (assignmentId) {
+    const assignment = db.assignments.find(a => a.id === assignmentId);
+    if (assignment) Object.assign(assignment, payload);
+  }
+  editingAssignmentId = null;
   closeModal();
-  showToast('Assignment created.');
+  if (assignmentId) {
+    showToast('Assignment updated.');
+    renderAll();
+  } else {
+    showToast('Assignment created.');
+  }
 });
 
 /* ---------------------------------------------------------
@@ -1842,6 +2189,13 @@ function openItemMenu(anchor, key, handlers) {
   const menu = document.getElementById('item-menu');
   // A second click on the same "⋯" puts it away instead of reopening.
   if (!menu.hidden && itemMenuKey === key) { closeItemMenu(); return; }
+  const leaveOnly = !!(handlers && handlers.onLeave);
+  const editItem = document.getElementById('item-menu-edit');
+  const deleteItem = document.getElementById('item-menu-del');
+  const leaveItem = document.getElementById('item-menu-leave');
+  if (editItem) editItem.hidden = leaveOnly;
+  if (deleteItem) deleteItem.hidden = leaveOnly;
+  if (leaveItem) leaveItem.hidden = !leaveOnly;
   itemMenuKey = key;
   itemMenuHandlers = handlers;
   menu.hidden = false;
@@ -1875,6 +2229,12 @@ document.getElementById('item-menu-del').addEventListener('click', () => {
   const h = itemMenuHandlers;
   closeItemMenu();
   if (h && h.onDelete) h.onDelete();
+});
+
+document.getElementById('item-menu-leave').addEventListener('click', () => {
+  const h = itemMenuHandlers;
+  closeItemMenu();
+  if (h && h.onLeave) h.onLeave();
 });
 
 // Click-away, Escape, scrolling or resizing put the menu away.
@@ -1943,7 +2303,12 @@ document.getElementById('em-save-btn').addEventListener('click', async () => {
 async function deleteMessage(id) {
   const m = currentMessages.find(x => x.id === id);
   if (!m) return;
-  if (!window.confirm('Delete this message? This cannot be undone.')) return;
+  const ok = await confirmAction({
+    title: 'Delete this message?',
+    message: 'This cannot be undone.',
+    confirmLabel: 'Delete'
+  });
+  if (!ok) return;
 
   const { error } = await sb.from('messages').delete().eq('id', id);
   if (error) { showToast('Could not delete message: ' + error.message, 'error'); return; }
@@ -2057,12 +2422,18 @@ function renderChatWindow(convId, fallbackConv) {
 
   const name = conversationDisplayName(conv);
   const sub = conv.type === 'group' ? `${(conv.participantIds || []).length} members` : 'Direct message';
+  const face = conv.type === 'group'
+    ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="3.4" stroke="currentColor" stroke-width="1.7"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16.5 3.3a4 4 0 0 1 0 7.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    : avatarHTML(findUser((conv.participantIds || []).find(id => id !== currentUser.uid)));
 
   if (messageChannel) { sb.removeChannel(messageChannel); messageChannel = null; }
   chatAttachedFile = null;
 
   win.innerHTML = `
-    <div class="chat-window__head"><div><strong>${escapeHTML(name)}</strong><span>${sub}</span></div></div>
+    <div class="chat-window__head">
+      <span class="avatar avatar--sm">${face}</span>
+      <div><strong>${escapeHTML(name)}</strong><span>${sub}</span></div>
+    </div>
     <div class="chat-window__messages" id="chat-messages"></div>
     <p class="chat-file-hint" id="chat-file-hint" hidden></p>
     <form class="chat-window__composer" id="chat-send-form">
@@ -2245,63 +2616,260 @@ document.getElementById('dm-start-btn').addEventListener('click', async () => {
    15. ANNOUNCEMENTS
    --------------------------------------------------------- */
 function renderAnnouncements() {
-  const teaching = isTeacher();
+  const teaching = isTeaching();
   document.getElementById('create-announcement-btn').hidden = !teaching || myTaughtClasses().length === 0;
 
-  const classIds = myClasses().map(c => c.id);
-  const relevant = db.announcements.filter(a => classIds.includes(a.class_id));
+  if (teaching && typeof renderTeacherAnnouncements === 'function') {
+    renderTeacherAnnouncements();
+    return;
+  }
+  if (typeof resetTeacherAnnouncementsUI === 'function') resetTeacherAnnouncementsUI();
 
-  const unread = relevant.filter(a => !a.readBy.includes(currentUser.uid));
-  const unreadEl = document.getElementById('announce-unread');
-  unreadEl.innerHTML = unread.length ? unread.map(a => `
-    <div class="announce-item" data-ann="${a.id}">
-      <div class="announce-item__top"><span class="announce-item__title">${escapeHTML(a.title)}</span></div>
-      <p class="announce-item__sub">${escapeHTML((findClass(a.class_id) || {}).name || '')} · ${timeAgo(a.timestamp)}</p>
-      <button class="announce-item__action" data-mark-read="${a.id}">Mark as read</button>
-    </div>`).join('') : `<p class="widget__empty">You're all caught up!</p>`;
-
-  const upcoming = db.assignments
-    .filter(a => classIds.includes(a.class_id) && getAssignmentStatus(a, currentUser.uid) !== 'submitted' && daysUntil(a.deadline) >= 0)
-    .sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
-  document.getElementById('announce-deadlines').innerHTML = upcoming.length ? upcoming.map(a => {
-    const status = getAssignmentStatus(a, currentUser.uid);
-    return `<div class="announce-item">
-      <div class="announce-item__top"><span class="announce-item__title">${escapeHTML(a.title)}</span><span class="status ${STATUS_CLASS[status]}">${STATUS_LABEL[status]}</span></div>
-      <p class="announce-item__sub">${escapeHTML((findClass(a.class_id) || {}).name || '')} · Due ${formatDeadline(a.deadline)}</p>
-    </div>`;
-  }).join('') : `<p class="widget__empty">No upcoming deadlines.</p>`;
-
-  const overdue = db.assignments.filter(a => classIds.includes(a.class_id) && getAssignmentStatus(a, currentUser.uid) === 'missing');
-  const todoItems = [...unread.map(a => ({ key: 'ann-' + a.id, label: 'Read: ' + a.title })), ...overdue.map(a => ({ key: 'asg-' + a.id, label: 'Submit: ' + a.title }))];
-  const done = getTodoDone();
-  const todoEl = document.getElementById('announce-todo');
-  todoEl.innerHTML = todoItems.length ? todoItems.map(t => {
-    const isDone = done.includes(t.key);
-    return `<div class="announce-item">
-      <label class="checkbox" style="margin:0 !important;">
-        <input type="checkbox" data-todo="${t.key}" ${isDone ? 'checked' : ''}>
-        <span style="${isDone ? 'text-decoration:line-through;color:var(--pine-faint);' : ''}">${escapeHTML(t.label)}</span>
-      </label>
-    </div>`;
-  }).join('') : `<p class="widget__empty">Nothing needs your attention today.</p>`;
+  renderStudentAnnouncements();
 }
 
-document.getElementById('announce-unread').addEventListener('click', e => {
-  const btn = e.target.closest('[data-mark-read]');
-  if (!btn) return;
-  markAnnouncementRead(btn.dataset.markRead);
-});
+let studentTimelineOffset = 0;
 
-document.getElementById('announce-todo').addEventListener('change', e => {
-  const box = e.target.closest('[data-todo]');
-  if (!box) return;
+function studentAnnouncementPreview(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  return value.length > 105 ? value.slice(0, 105) + '…' : value;
+}
+
+function studentDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function studentWeekStart(date) {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const offset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - offset);
+  return start;
+}
+
+function studentTimelineLabel(start, end) {
+  if (start.getMonth() === end.getMonth()) {
+    return start.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+  }
+  const startLabel = start.toLocaleDateString('en-PH', { month: 'short' });
+  const endLabel = end.toLocaleDateString('en-PH', { month: 'short', year: 'numeric' });
+  return `${startLabel} – ${endLabel}`;
+}
+
+function renderStudentAnnouncements() {
+  renderStudentAnnouncementCards();
+  renderStudentTasks();
+  renderStudentTimeline();
+}
+
+function renderStudentAnnouncementCards() {
+  const list = document.getElementById('student-announce-cards');
+  if (!list) return;
+
+  const classIds = myJoinedClasses().map(c => c.id);
+  const announcements = db.announcements
+    .filter(a => classIds.includes(a.class_id))
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, 3);
+
+  if (announcements.length === 0) {
+    list.innerHTML = `
+      <div class="student-announce-empty">
+        <span class="student-announce-empty__icon">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <strong>You're all caught up!</strong>
+        <span>No announcements from your classes yet.</span>
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = announcements.map((a, index) => {
+    const cls = findClass(a.class_id);
+    const author = findUser(a.author_id) || (cls ? findUser(cls.teacher_id) : null) || { name: 'Teacher', initials: 'T' };
+    const unread = !a.readBy.includes(currentUser.uid);
+    const tint = index % 3;
+    return `
+      <article class="student-announce-card student-announce-card--${tint}${unread ? ' is-unread' : ' is-read'}">
+        <div class="student-announce__top">
+          <span class="student-announce__class">${escapeHTML(cls ? cls.name : '')}</span>
+          <span class="student-announce__time">${escapeHTML(timeAgo(a.timestamp))}</span>
+        </div>
+        <h4 class="student-announce__title">${escapeHTML(a.title)}</h4>
+        <p class="student-announce__preview">${escapeHTML(studentAnnouncementPreview(a.body))}</p>
+        <div class="student-announce__foot">
+          <span class="avatar avatar--sm student-announce__avatar" title="${escapeHTML(author.name || 'Teacher')}">${avatarHTML(author)}</span>
+        </div>
+        ${unread ? `
+          <button type="button" class="student-announce__read" data-student-mark-read="${a.id}" title="Mark as read" aria-label="Mark as read">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="student-sr-only">Mark as read</span>
+          </button>` : `
+          <span class="student-announce__read is-read" title="Marked as read" aria-label="Marked as read">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="student-sr-only">Marked as read</span>
+          </span>`}
+      </article>`;
+  }).join('');
+}
+
+function renderStudentTasks() {
+  const el = document.getElementById('student-tasks');
+  if (!el) return;
+
+  const classIds = myJoinedClasses().map(c => c.id);
+  const unread = db.announcements
+    .filter(a => classIds.includes(a.class_id) && !a.readBy.includes(currentUser.uid))
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const pending = db.assignments
+    .filter(a => classIds.includes(a.class_id) && getAssignmentStatus(a, currentUser.uid) !== 'submitted')
+    .sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+
+  const items = [
+    ...unread.map(a => ({
+      key: 'ann-' + a.id,
+      label: 'Read: ' + a.title,
+      sub: (findClass(a.class_id) || {}).name || ''
+    })),
+    ...pending.map(a => ({
+      key: 'asg-' + a.id,
+      label: 'Submit: ' + a.title,
+      sub: (findClass(a.class_id) || {}).name || ''
+    }))
+  ];
+
   const done = getTodoDone();
-  const idx = done.indexOf(box.dataset.todo);
-  if (box.checked && idx === -1) done.push(box.dataset.todo);
-  if (!box.checked && idx >= 0) done.splice(idx, 1);
-  setTodoDone(done);
-  renderAnnouncements();
-});
+  const completed = items.filter(item => done.includes(item.key)).length;
+  const left = items.length - completed;
+  const countLabel = items.length === 1 ? 'task' : 'tasks';
+  const summary = `
+    <div class="student-tasks__summary">
+      <strong class="student-tasks__count">${items.length}</strong> <span class="student-tasks__count-label">${countLabel}</span>
+      <span class="student-tasks__summary-text">${completed} completed, ${left} left</span>
+    </div>`;
+
+  if (items.length === 0) {
+    el.innerHTML = summary + `<p class="widget__empty">Nothing needs your attention today.</p>`;
+    return;
+  }
+
+  el.innerHTML = summary + `<ul class="student-task-list">${items.map(item => {
+    const isDone = done.includes(item.key);
+    return `
+      <li class="student-task${isDone ? ' is-done' : ''}">
+        <label class="student-task__label">
+          <input type="checkbox" class="student-task__box" data-student-todo="${item.key}" ${isDone ? 'checked' : ''}>
+          <span class="student-task__main">
+            <span class="student-task__title">${escapeHTML(item.label)}</span>
+            <span class="student-task__sub">${escapeHTML(item.sub)}</span>
+          </span>
+        </label>
+      </li>`;
+  }).join('')}</ul>`;
+}
+
+function renderStudentTimeline() {
+  const el = document.getElementById('student-timeline');
+  const monthEl = document.getElementById('student-timeline-month');
+  if (!el || !monthEl) return;
+
+  const classIds = myJoinedClasses().map(c => c.id);
+  const assignments = db.assignments.filter(a => classIds.includes(a.class_id));
+  const todayKey = studentDateKey(new Date());
+  const start = studentWeekStart(new Date());
+  start.setDate(start.getDate() + studentTimelineOffset * 7);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return day;
+  });
+
+  monthEl.textContent = studentTimelineLabel(days[0], days[6]);
+
+  el.innerHTML = days.map(day => {
+    const key = studentDateKey(day);
+    const isToday = key === todayKey;
+    const dayAssignments = assignments
+      .filter(a => a.deadline === key)
+      .sort((a, b) => String(a.title).localeCompare(String(b.title)));
+
+    const bars = dayAssignments.map(a => {
+      const cls = findClass(a.class_id);
+      return `
+        <button type="button" class="student-timeline__bar" data-student-timeline-bar="${a.id}" title="${escapeHTML(cls ? cls.name : '')}">
+          <span class="student-timeline__bar-title">${escapeHTML(a.title)}</span>
+        </button>`;
+    }).join('');
+
+    return `
+      <div class="student-timeline__row${isToday ? ' is-today' : ''}${dayAssignments.length === 0 ? ' is-empty' : ''}">
+        <div class="student-timeline__day">
+          <span class="student-timeline__date">${day.getDate()}</span>
+          <span class="student-timeline__weekday">${escapeHTML(day.toLocaleDateString('en-PH', { weekday: 'short' }))}</span>
+        </div>
+        <div class="student-timeline__bars">
+          ${bars || '<span class="student-timeline__none">No deadlines</span>'}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+const studentAnnouncementsRoot = document.getElementById('student-announcements');
+if (studentAnnouncementsRoot) {
+  studentAnnouncementsRoot.addEventListener('click', async event => {
+    const readButton = event.target.closest('[data-student-mark-read]');
+    if (readButton) {
+      const id = readButton.dataset.studentMarkRead;
+      readButton.disabled = true;
+      const marked = await markAnnouncementRead(id);
+      if (!marked) {
+        readButton.disabled = false;
+        return;
+      }
+      const announcement = db.announcements.find(a => a.id === id);
+      if (announcement && !announcement.readBy.includes(currentUser.uid)) {
+        announcement.readBy.push(currentUser.uid);
+      }
+      renderStudentAnnouncements();
+      return;
+    }
+
+    const bar = event.target.closest('[data-student-timeline-bar]');
+    if (bar) {
+      openAssignmentDetail(bar.dataset.studentTimelineBar);
+      return;
+    }
+
+    const previous = event.target.closest('[data-student-timeline-prev]');
+    if (previous) {
+      studentTimelineOffset -= 1;
+      renderStudentTimeline();
+      return;
+    }
+
+    const next = event.target.closest('[data-student-timeline-next]');
+    if (next) {
+      studentTimelineOffset += 1;
+      renderStudentTimeline();
+      return;
+    }
+  });
+
+  studentAnnouncementsRoot.addEventListener('change', event => {
+    const box = event.target.closest('[data-student-todo]');
+    if (!box) return;
+    const done = getTodoDone();
+    const index = done.indexOf(box.dataset.studentTodo);
+    if (box.checked && index === -1) done.push(box.dataset.studentTodo);
+    if (!box.checked && index >= 0) done.splice(index, 1);
+    setTodoDone(done);
+    renderStudentAnnouncements();
+  });
+}
 
 document.getElementById('create-announcement-btn').addEventListener('click', () => {
   const select = document.getElementById('an-class');
@@ -2329,15 +2897,504 @@ document.getElementById('an-submit').addEventListener('click', async () => {
   showToast('Announcement posted.');
 });
 
+let teacherTimelineOffset = 0;
+let teacherAnnouncementsUiReady = false;
+let teacherEditingAnnouncementId = null;
+
+function teacherTaughtAnnouncements() {
+  const classIds = myTaughtClasses().map(c => c.id);
+  return db.announcements
+    .filter(a => a.author_id === currentUser.uid && classIds.includes(a.class_id))
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+}
+
+function teacherAnnouncementRead(a) {
+  const cls = findClass(a.class_id);
+  const studentIds = cls ? cls.studentIds : [];
+  const readers = new Set((a.readBy || []).filter(id => studentIds.includes(id)));
+  const total = studentIds.length;
+  return {
+    read: readers.size,
+    total,
+    percent: total > 0 ? Math.round((readers.size / total) * 100) : 0
+  };
+}
+
+function teacherAnnouncementPreview(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  return value.length > 105 ? value.slice(0, 105) + '…' : value;
+}
+
+function teacherAnnouncementTint(classId) {
+  const index = myTaughtClasses().findIndex(c => c.id === classId);
+  return index < 0 ? 0 : index % 4;
+}
+
+function teacherDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function teacherWeekStart(date) {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const offset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - offset);
+  return start;
+}
+
+function teacherTimelineLabel(start, end) {
+  if (start.getMonth() === end.getMonth()) {
+    return start.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+  }
+  const startLabel = start.toLocaleDateString('en-PH', { month: 'short' });
+  const endLabel = end.toLocaleDateString('en-PH', { month: 'short', year: 'numeric' });
+  return `${startLabel} – ${endLabel}`;
+}
+
+function ensureTeacherAnnouncementsUI() {
+  if (teacherAnnouncementsUiReady) return;
+
+  const view = document.getElementById('view-announcements');
+  const header = view ? view.querySelector('.view-header') : null;
+  const studentCols = view ? view.querySelector('.announce-cols') : null;
+  if (!view || !header || !studentCols) return;
+
+  const container = document.createElement('div');
+  container.className = 'teacher-announce';
+  container.id = 'teacher-announcements';
+  container.hidden = true;
+  container.innerHTML = `
+    <section class="teacher-announce__section">
+      <div class="teacher-announce__section-head">
+        <h3>Your announcements</h3>
+      </div>
+      <div class="teacher-announce-cards" id="teacher-announce-cards"></div>
+    </section>
+    <div class="teacher-announce-panels">
+      <section class="teacher-panel">
+        <div class="teacher-panel__head">
+          <h3>Needs your attention</h3>
+        </div>
+        <div id="teacher-attention"></div>
+      </section>
+      <section class="teacher-panel">
+        <div class="teacher-timeline__head">
+          <div>
+            <h3>Deadline timeline</h3>
+            <span class="teacher-timeline__month" id="teacher-timeline-month"></span>
+          </div>
+          <div class="teacher-timeline__nav">
+            <button type="button" class="teacher-timeline__arrow" data-teacher-timeline-prev aria-label="Previous week">&lsaquo;</button>
+            <button type="button" class="teacher-timeline__arrow" data-teacher-timeline-next aria-label="Next week">&rsaquo;</button>
+          </div>
+        </div>
+        <div class="teacher-timeline" id="teacher-timeline"></div>
+      </section>
+    </div>`;
+
+  header.insertAdjacentElement('afterend', container);
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.id = 'modal-teacher-announcement-edit';
+  modal.hidden = true;
+  modal.innerHTML = `
+    <div class="modal__head">
+      <h2>Edit announcement</h2>
+      <button class="modal__close" type="button" data-close>&times;</button>
+    </div>
+    <div class="modal__body">
+      <label>Class</label>
+      <select id="tae-class"></select>
+      <label>Title</label>
+      <input type="text" id="tae-title" placeholder="e.g. Deadline moved to Friday">
+      <label>Message</label>
+      <textarea id="tae-body" rows="4" placeholder="What should students know?"></textarea>
+      <p class="field-error" id="tae-error" hidden></p>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close>Cancel</button>
+      <button class="btn btn--primary" type="button" id="tae-save">Save changes</button>
+    </div>`;
+  const backdrop = document.getElementById('modal-backdrop');
+  (backdrop || document.body).appendChild(modal);
+
+  container.addEventListener('click', event => {
+    const newAnnouncement = event.target.closest('[data-teacher-new-announcement]');
+    if (newAnnouncement) {
+      document.getElementById('create-announcement-btn').click();
+      return;
+    }
+
+    const edit = event.target.closest('[data-teacher-edit]');
+    if (edit) {
+      openTeacherAnnouncementEdit(edit.dataset.teacherEdit);
+      return;
+    }
+
+    const remind = event.target.closest('[data-teacher-remind]');
+    if (remind) {
+      teacherRemindAnnouncement(remind.dataset.teacherRemind, remind);
+      return;
+    }
+
+    const bar = event.target.closest('[data-teacher-timeline-bar]');
+    if (bar) {
+      openTeacherAssignment(bar.dataset.teacherTimelineBar);
+      return;
+    }
+
+    const previous = event.target.closest('[data-teacher-timeline-prev]');
+    if (previous) {
+      teacherTimelineOffset -= 1;
+      renderTeacherAnnouncements();
+      return;
+    }
+
+    const next = event.target.closest('[data-teacher-timeline-next]');
+    if (next) {
+      teacherTimelineOffset += 1;
+      renderTeacherAnnouncements();
+      return;
+    }
+
+    const action = event.target.closest('[data-teacher-attention-action]');
+    if (action) {
+      if (action.dataset.teacherAttentionAction === 'grade' && action.dataset.teacherAssignmentId) {
+        openTeacherAssignment(action.dataset.teacherAssignmentId);
+      } else if (action.dataset.teacherAttentionAction === 'remind' && action.dataset.teacherAnnouncementId) {
+        teacherRemindAnnouncement(action.dataset.teacherAnnouncementId, action);
+      }
+    }
+  });
+
+  container.addEventListener('change', event => {
+    const box = event.target.closest('[data-teacher-todo]');
+    if (!box) return;
+    const done = getTodoDone();
+    const index = done.indexOf(box.dataset.teacherTodo);
+    if (box.checked && index === -1) done.push(box.dataset.teacherTodo);
+    if (!box.checked && index >= 0) done.splice(index, 1);
+    setTodoDone(done);
+    renderTeacherAnnouncements();
+  });
+
+  modal.addEventListener('click', event => {
+    if (event.target.closest('[data-close]')) closeModal();
+  });
+
+  document.getElementById('tae-save').addEventListener('click', event => {
+    saveTeacherAnnouncementEdit(event.currentTarget);
+  });
+
+  teacherAnnouncementsUiReady = true;
+}
+
+function resetTeacherAnnouncementsUI() {
+  const container = document.getElementById('teacher-announcements');
+  if (container) container.hidden = true;
+  const view = document.getElementById('view-announcements');
+  const studentCols = view ? view.querySelector('.announce-cols') : null;
+  if (studentCols) studentCols.hidden = false;
+}
+
+function renderTeacherAnnouncementCards() {
+  const list = document.getElementById('teacher-announce-cards');
+  if (!list) return;
+
+  const announcements = teacherTaughtAnnouncements().slice(0, 3);
+  const newCard = `
+    <button type="button" class="teacher-announce-card teacher-announce-card--new" data-teacher-new-announcement>
+      <span class="teacher-announce-card__plus">+</span>
+      <span>New announcement</span>
+    </button>`;
+
+  if (announcements.length === 0) {
+    list.innerHTML = newCard + `
+      <div class="teacher-announce-card teacher-announce-card--empty">
+        <span class="teacher-announce-card__empty-title">No announcements yet</span>
+        <button type="button" class="btn btn--ghost btn--sm" data-teacher-new-announcement>New announcement</button>
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = newCard + announcements.map(a => {
+    const cls = findClass(a.class_id);
+    const read = teacherAnnouncementRead(a);
+    const tint = teacherAnnouncementTint(a.class_id);
+    return `
+      <article class="teacher-announce-card teacher-announce-card--tint-${tint}">
+        <div class="teacher-announce-card__top">
+          <span class="teacher-announce-card__class">${escapeHTML(cls ? cls.name : '')}</span>
+          <span class="teacher-announce-card__actions">
+            <button type="button" class="teacher-announce-icon" data-teacher-edit="${a.id}" title="Edit" aria-label="Edit">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 20h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="teacher-sr-only">Edit</span>
+            </button>
+            <button type="button" class="teacher-announce-icon" data-teacher-remind="${a.id}" title="Remind unread" aria-label="Remind unread">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <span class="teacher-sr-only">Remind unread</span>
+            </button>
+          </span>
+        </div>
+        <h4 class="teacher-announce-card__title">${escapeHTML(a.title)}</h4>
+        <p class="teacher-announce-card__preview">${escapeHTML(teacherAnnouncementPreview(a.body))}</p>
+        <div class="teacher-announce-card__foot">
+          <span class="teacher-announce-card__time">${escapeHTML(timeAgo(a.timestamp))}</span>
+          <span class="teacher-announce-card__receipt">
+            <span class="teacher-announce-card__receipt-label">${read.read}/${read.total} read</span>
+            <span class="teacher-announce-card__track">
+              <span class="teacher-announce-card__fill" style="width:${read.percent}%"></span>
+            </span>
+          </span>
+        </div>
+      </article>`;
+  }).join('');
+}
+
+function renderTeacherAttention() {
+  const el = document.getElementById('teacher-attention');
+  if (!el) return;
+
+  const taught = myTaughtClasses();
+  const classIds = taught.map(c => c.id);
+  const assignments = db.assignments.filter(a => classIds.includes(a.class_id));
+  const announcements = teacherTaughtAnnouncements();
+  const items = [];
+
+  assignments.forEach(a => {
+    const counts = teacherAssignmentCounts(a);
+    const ungraded = counts.submitted - counts.graded;
+    if (ungraded <= 0) return;
+    const cls = findClass(a.class_id);
+    items.push({
+      key: 'teacher-grade-' + a.id,
+      label: `${ungraded} new submission${ungraded === 1 ? '' : 's'} - ${a.title}`,
+      sub: cls ? cls.name : '',
+      action: 'grade',
+      actionLabel: 'Grade',
+      assignmentId: a.id
+    });
+  });
+
+  assignments.forEach(a => {
+    const days = daysUntil(a.deadline);
+    if (days < 0 || days > 2) return;
+    const cls = findClass(a.class_id);
+    items.push({
+      key: 'teacher-closing-' + a.id,
+      label: `Closes in ${days} day${days === 1 ? '' : 's'} - ${a.title}`,
+      sub: cls ? cls.name : '',
+      action: 'grade',
+      actionLabel: 'Grade',
+      assignmentId: a.id
+    });
+  });
+
+  announcements.forEach(a => {
+    const read = teacherAnnouncementRead(a);
+    if (read.total === 0 || read.read / read.total >= 0.5) return;
+    const cls = findClass(a.class_id);
+    items.push({
+      key: 'teacher-remind-' + a.id,
+      label: `Read rate ${read.percent}% - ${a.title}`,
+      sub: cls ? cls.name : '',
+      action: 'remind',
+      actionLabel: 'Remind',
+      announcementId: a.id
+    });
+  });
+
+  const done = getTodoDone();
+  const completed = items.filter(item => done.includes(item.key)).length;
+  const left = items.length - completed;
+
+  const summary = `
+    <div class="teacher-attention__summary">
+      <strong class="teacher-attention__count">${left}</strong>
+      <span class="teacher-attention__summary-text">${completed} completed, ${left} left</span>
+    </div>`;
+
+  if (items.length === 0) {
+    el.innerHTML = summary + `<p class="widget__empty">Nothing needs your attention today.</p>`;
+    return;
+  }
+
+  el.innerHTML = summary + `<ul class="teacher-attention__list">${items.map(item => {
+    const isDone = done.includes(item.key);
+    const dataId = item.assignmentId
+      ? ` data-teacher-assignment-id="${item.assignmentId}"`
+      : item.announcementId
+        ? ` data-teacher-announcement-id="${item.announcementId}"`
+        : '';
+    return `
+      <li class="teacher-attention__item${isDone ? ' is-done' : ''}">
+        <input type="checkbox" class="teacher-attention__box" data-teacher-todo="${item.key}" ${isDone ? 'checked' : ''} aria-label="${escapeHTML(item.label)}">
+        <div class="teacher-attention__main">
+          <span class="teacher-attention__label">${escapeHTML(item.label)}</span>
+          <span class="teacher-attention__sub">${escapeHTML(item.sub)}</span>
+        </div>
+        <button type="button" class="btn btn--ghost btn--sm" data-teacher-attention-action="${item.action}"${dataId}>${item.actionLabel}</button>
+      </li>`;
+  }).join('')}</ul>`;
+}
+
+function renderTeacherTimeline() {
+  const el = document.getElementById('teacher-timeline');
+  const monthEl = document.getElementById('teacher-timeline-month');
+  if (!el || !monthEl) return;
+
+  const classIds = myTaughtClasses().map(c => c.id);
+  const assignments = db.assignments.filter(a => classIds.includes(a.class_id));
+  const todayKey = teacherDateKey(new Date());
+  const start = teacherWeekStart(new Date());
+  start.setDate(start.getDate() + teacherTimelineOffset * 7);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return day;
+  });
+
+  monthEl.textContent = teacherTimelineLabel(days[0], days[6]);
+
+  el.innerHTML = days.map(day => {
+    const key = teacherDateKey(day);
+    const isToday = key === todayKey;
+    const dayAssignments = assignments
+      .filter(a => a.deadline === key)
+      .sort((a, b) => String(a.title).localeCompare(String(b.title)));
+
+    const bars = dayAssignments.map(a => {
+      const counts = teacherAssignmentCounts(a);
+      const tint = teacherAnnouncementTint(a.class_id);
+      return `
+        <button type="button" class="teacher-timeline__bar teacher-timeline__bar--${tint}" data-teacher-timeline-bar="${a.id}">
+          <span class="teacher-timeline__bar-title">${escapeHTML(a.title)}</span>
+          <span class="teacher-timeline__bar-meta">${counts.submitted}/${counts.expected} submitted</span>
+        </button>`;
+    }).join('');
+
+    return `
+      <div class="teacher-timeline__row${isToday ? ' is-today' : ''}${dayAssignments.length === 0 ? ' is-empty' : ''}">
+        <div class="teacher-timeline__day">
+          <span class="teacher-timeline__date">${day.getDate()}</span>
+          <span class="teacher-timeline__weekday">${escapeHTML(day.toLocaleDateString('en-PH', { weekday: 'short' }))}</span>
+        </div>
+        <div class="teacher-timeline__bars">
+          ${bars || '<span class="teacher-timeline__none">No deadlines</span>'}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderTeacherAnnouncements() {
+  ensureTeacherAnnouncementsUI();
+  if (!teacherAnnouncementsUiReady) return;
+
+  const view = document.getElementById('view-announcements');
+  const studentCols = view ? view.querySelector('.announce-cols') : null;
+  const container = document.getElementById('teacher-announcements');
+  if (studentCols) studentCols.hidden = true;
+  if (container) container.hidden = false;
+
+  renderTeacherAnnouncementCards();
+  renderTeacherAttention();
+  renderTeacherTimeline();
+}
+
+function openTeacherAnnouncementEdit(announcementId) {
+  ensureTeacherAnnouncementsUI();
+  const announcement = db.announcements.find(a => a.id === announcementId);
+  if (!announcement) return;
+
+  teacherEditingAnnouncementId = announcementId;
+  const select = document.getElementById('tae-class');
+  select.innerHTML = myTaughtClasses()
+    .map(c => `<option value="${c.id}">${escapeHTML(c.name)} (${escapeHTML(c.section)})</option>`)
+    .join('');
+  select.value = announcement.class_id;
+  document.getElementById('tae-title').value = announcement.title;
+  document.getElementById('tae-body').value = announcement.body || '';
+  document.getElementById('tae-error').hidden = true;
+  openModal('modal-teacher-announcement-edit');
+}
+
+async function saveTeacherAnnouncementEdit(btn) {
+  const classId = document.getElementById('tae-class').value;
+  const title = document.getElementById('tae-title').value.trim();
+  const body = document.getElementById('tae-body').value.trim();
+  const errorEl = document.getElementById('tae-error');
+
+  if (!title) {
+    errorEl.textContent = 'Please give the announcement a title.';
+    errorEl.hidden = false;
+    return;
+  }
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  const { error } = await sb.from('announcements')
+    .update({ class_id: classId, title, body })
+    .eq('id', teacherEditingAnnouncementId);
+  btn.disabled = false;
+  btn.textContent = label;
+
+  if (error) {
+    errorEl.textContent = 'Failed to save: ' + error.message;
+    errorEl.hidden = false;
+    return;
+  }
+
+  const announcement = db.announcements.find(a => a.id === teacherEditingAnnouncementId);
+  if (announcement) {
+    announcement.class_id = classId;
+    announcement.title = title;
+    announcement.body = body;
+  }
+  closeModal();
+  renderTeacherAnnouncements();
+  showToast('Announcement updated.');
+}
+
+function teacherRemindAnnouncement(announcementId, btn) {
+  const announcement = db.announcements.find(a => a.id === announcementId);
+  if (!announcement) return;
+  const cls = findClass(announcement.class_id);
+  const unread = cls
+    ? cls.studentIds.filter(id => !(announcement.readBy || []).includes(id))
+    : [];
+
+  if (unread.length === 0) {
+    showToast('Everyone has already read this announcement.');
+    return;
+  }
+
+  safeLocal.set(
+    `socialearn:announcement-reminder:${announcementId}:${Date.now()}`,
+    JSON.stringify(unread)
+  );
+  if (btn) btn.blur();
+  showToast(`Reminder sent to ${unread.length} student${unread.length === 1 ? '' : 's'}.`);
+}
+
 /* ---------------------------------------------------------
    16. PROFILE
    --------------------------------------------------------- */
 function renderProfile() {
   const u = me();
+  const teacher = isTeacher();
   document.getElementById('profile-name').textContent = u.name;
   document.getElementById('profile-username').textContent = '@' + u.username;
   document.getElementById('profile-role').textContent = roleLabel();
+  document.getElementById('profile-classlabel').textContent = teacher ? 'Classes' : 'Classes joined';
   document.getElementById('profile-classcount').textContent = myClasses().length;
+  document.getElementById('profile-submit-stat').hidden = teacher;
+  const profileGrid = document.getElementById('profile-grid');
+  profileGrid.style.gridTemplateColumns = teacher ? '1fr' : '';
+  profileGrid.style.textAlign = teacher ? 'center' : '';
   document.getElementById('profile-submitcount').textContent = db.submissions.filter(s => s.student_id === currentUser.uid).length;
   setAvatar(document.getElementById('profile-avatar'), u);
 }
@@ -2636,7 +3693,11 @@ async function markAnnouncementRead(id) {
   const { error } = await sb.from('announcement_reads')
     .upsert({ announcement_id: id, user_id: currentUser.uid },
             { onConflict: 'announcement_id,user_id' });
-  if (error) showToast('Could not mark as read: ' + error.message, 'error');
+  if (error) {
+    showToast('Could not mark as read: ' + error.message, 'error');
+    return false;
+  }
+  return true;
 }
 
 function notifTitle(n) {
@@ -2858,6 +3919,521 @@ function renderAll() {
   } catch (e) {
       console.error('SociaLearn: role prompt failed', e);
   }
+}
+
+const TEACHER_SUBTITLE = 'Manage assignments and review student submissions.';
+const STUDENT_SUBTITLE = 'Track your deadlines and submissions.';
+const TEACHER_FEEDBACK_PREFIX = 'socialearn:feedback:';
+
+const TEACHER_TABS = [
+  { key: 'all', label: 'All' },
+  { key: 'open', label: 'Open' },
+  { key: 'needs-grading', label: 'Needs grading' },
+  { key: 'past-due', label: 'Past due' },
+  { key: 'graded', label: 'Graded' }
+];
+
+const TEACHER_STATUS = {
+  open: { label: 'Open', className: 'status--upcoming' },
+  closed: { label: 'Closed', className: 'status--overdue' },
+  'needs-grading': { label: 'Needs grading', className: 'status--due-soon' },
+  graded: { label: 'Graded', className: 'status--completed' }
+};
+
+let teacherAssignmentTab = 'all';
+let teacherAssignmentId = null;
+let teacherAssignmentsUiReady = false;
+
+function teacherFeedbackKey(submissionId) {
+  return TEACHER_FEEDBACK_PREFIX + submissionId;
+}
+
+function getTeacherFeedback(submissionId) {
+  if (!submissionId) return '';
+  return safeLocal.get(teacherFeedbackKey(submissionId)) || '';
+}
+
+function setTeacherFeedback(submissionId, value) {
+  if (!submissionId) return;
+  safeLocal.set(teacherFeedbackKey(submissionId), value);
+}
+
+function teacherAssignmentCounts(assignment) {
+  const cls = findClass(assignment.class_id);
+  const expected = cls ? cls.studentIds.length : 0;
+  const subs = db.submissions.filter(s => s.assignmentId === assignment.id);
+  const submitted = subs.length;
+  const graded = subs.filter(s => s.score !== null && s.score !== undefined).length;
+  return { expected, subs, submitted, graded };
+}
+
+function teacherDeadlineLabel(dateStr) {
+  const days = daysUntil(dateStr);
+  if (days < 0) return { label: 'Closed', closed: true };
+  return { label: `Due in ${days} day${days === 1 ? '' : 's'}`, closed: false };
+}
+
+function teacherAssignmentStatus(assignment, counts) {
+  if (counts.submitted > counts.graded) return 'needs-grading';
+  if (counts.submitted > 0 && counts.graded === counts.submitted) return 'graded';
+  if (daysUntil(assignment.deadline) < 0) return 'closed';
+  return 'open';
+}
+
+function teacherMatchesTab(assignment, counts, tab) {
+  if (tab === 'open') return daysUntil(assignment.deadline) >= 0;
+  if (tab === 'needs-grading') return counts.submitted > counts.graded;
+  if (tab === 'past-due') return daysUntil(assignment.deadline) < 0;
+  if (tab === 'graded') return teacherAssignmentStatus(assignment, counts) === 'graded';
+  return true;
+}
+
+function ensureTeacherAssignmentsUI() {
+  if (teacherAssignmentsUiReady) return;
+
+  const view = document.getElementById('view-assignments');
+  const header = view ? view.querySelector('.view-header') : null;
+  const list = document.getElementById('assignment-list');
+  if (!view || !header || !list) return;
+
+  const summary = document.createElement('div');
+  summary.className = 'assignment-summary';
+  summary.id = 'teacher-assignment-summary';
+  summary.hidden = true;
+  summary.innerHTML = `
+    <div class="assignment-summary__card">
+      <span class="assignment-summary__label">Total assignments</span>
+      <strong class="assignment-summary__value" id="teacher-total-assignments">0</strong>
+    </div>
+    <div class="assignment-summary__card">
+      <span class="assignment-summary__label">Needs grading</span>
+      <strong class="assignment-summary__value" id="teacher-needs-grading">0</strong>
+    </div>
+    <div class="assignment-summary__card">
+      <span class="assignment-summary__label">Due this week</span>
+      <strong class="assignment-summary__value" id="teacher-due-this-week">0</strong>
+    </div>
+    <div class="assignment-summary__card">
+      <span class="assignment-summary__label">Avg submission rate</span>
+      <strong class="assignment-summary__value" id="teacher-submission-rate">0%</strong>
+    </div>`;
+
+  const tabs = document.createElement('div');
+  tabs.className = 'assignment-tabs';
+  tabs.id = 'teacher-assignment-tabs';
+  tabs.setAttribute('role', 'tablist');
+  tabs.hidden = true;
+  tabs.innerHTML = TEACHER_TABS.map(tab => `
+    <button type="button" class="assignment-tab${tab.key === 'all' ? ' is-active' : ''}"
+            data-assignment-tab="${tab.key}" role="tab"
+            aria-selected="${tab.key === 'all' ? 'true' : 'false'}">${tab.label}</button>`).join('');
+
+  header.insertAdjacentElement('afterend', summary);
+  summary.insertAdjacentElement('afterend', tabs);
+
+  const modal = document.createElement('div');
+  modal.className = 'modal teacher-assignment-modal';
+  modal.id = 'modal-teacher-assignment';
+  modal.hidden = true;
+  modal.innerHTML = `
+    <div class="modal__head">
+      <h2 id="ta-title">Assignment</h2>
+      <button class="modal__close" type="button" data-close>&times;</button>
+    </div>
+    <div class="modal__body">
+      <p class="ad-meta" id="ta-meta"></p>
+      <p id="ta-instructions"></p>
+      <div class="teacher-submissions__scroll">
+        <table class="teacher-submissions">
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>Status</th>
+              <th>Submitted</th>
+              <th>File</th>
+              <th>Score</th>
+              <th>Feedback</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ta-students"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close>Close</button>
+      <button class="btn btn--primary" type="button" id="ta-edit-btn">Edit assignment</button>
+    </div>`;
+  const backdrop = document.getElementById('modal-backdrop');
+  (backdrop || document.body).appendChild(modal);
+
+  tabs.addEventListener('click', event => {
+    const tab = event.target.closest('[data-assignment-tab]');
+    if (!tab) return;
+    teacherAssignmentTab = tab.dataset.assignmentTab;
+    tabs.querySelectorAll('.assignment-tab').forEach(btn => {
+      const active = btn === tab;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', String(active));
+    });
+    renderTeacherAssignments();
+  });
+
+  const teacherList = document.getElementById('assignment-list');
+  teacherList.addEventListener('click', event => {
+    const edit = event.target.closest('[data-teacher-assignment-edit]');
+    if (edit) {
+      openEditAssignment(edit.dataset.teacherAssignmentEdit);
+      return;
+    }
+    const review = event.target.closest('[data-teacher-review]');
+    if (review) {
+      openTeacherAssignment(review.dataset.teacherReview);
+      return;
+    }
+    const row = event.target.closest('[data-teacher-assignment]');
+    if (row) openTeacherAssignment(row.dataset.teacherAssignment);
+  });
+
+  modal.addEventListener('click', event => {
+    if (event.target.closest('#ta-edit-btn')) {
+      openEditAssignment(teacherAssignmentId);
+      return;
+    }
+    if (event.target.closest('[data-close]')) {
+      closeModal();
+      return;
+    }
+    const openFile = event.target.closest('[data-open-submission]');
+    if (openFile) {
+      openSubmissionFile(openFile.dataset.openSubmission, openFile);
+      return;
+    }
+    const save = event.target.closest('[data-teacher-save]');
+    if (save) {
+      saveTeacherGrade(save.dataset.teacherSave, save);
+      return;
+    }
+    const remind = event.target.closest('[data-teacher-remind]');
+    if (remind) sendTeacherReminder(remind.dataset.teacherRemind, remind);
+  });
+
+  modal.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    const input = event.target.closest('[data-teacher-score]');
+    if (!input) return;
+    const save = modal.querySelector(`[data-teacher-save="${input.dataset.teacherScore}"]`);
+    if (save) {
+      event.preventDefault();
+      saveTeacherGrade(input.dataset.teacherScore, save);
+    }
+  });
+
+  teacherAssignmentsUiReady = true;
+}
+
+function resetTeacherAssignmentsUI() {
+  const summary = document.getElementById('teacher-assignment-summary');
+  if (summary) summary.hidden = true;
+  const tabs = document.getElementById('teacher-assignment-tabs');
+  if (tabs) tabs.hidden = true;
+  const view = document.getElementById('view-assignments');
+  const subtitle = view ? view.querySelector('.view-header__sub') : null;
+  if (subtitle) subtitle.textContent = STUDENT_SUBTITLE;
+}
+
+function populateTeacherClassFilter() {
+  const classes = myTaughtClasses();
+  const filterSelect = document.getElementById('assignment-filter');
+  if (!filterSelect) return classes;
+  const previous = filterSelect.value || 'all';
+  filterSelect.innerHTML = `<option value="all">All classes</option>` + classes
+    .map(c => `<option value="${c.id}">${escapeHTML(c.name)}</option>`)
+    .join('');
+  filterSelect.value = classes.some(c => c.id === previous) ? previous : 'all';
+  return classes;
+}
+
+function renderTeacherAssignments() {
+  ensureTeacherAssignmentsUI();
+  if (!teacherAssignmentsUiReady) return;
+
+  const view = document.getElementById('view-assignments');
+  const subtitle = view ? view.querySelector('.view-header__sub') : null;
+  if (subtitle) subtitle.textContent = TEACHER_SUBTITLE;
+
+  const classes = populateTeacherClassFilter();
+  const classIds = classes.map(c => c.id);
+  const filterSelect = document.getElementById('assignment-filter');
+  const classFilter = filterSelect ? filterSelect.value : 'all';
+
+  let assignments = db.assignments.filter(a => classIds.includes(a.class_id));
+  if (classFilter !== 'all') assignments = assignments.filter(a => a.class_id === classFilter);
+  assignments = assignments.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+
+  const summary = document.getElementById('teacher-assignment-summary');
+  const studentTabs = document.getElementById('assignment-tabs');
+  const teacherTabs = document.getElementById('teacher-assignment-tabs');
+  if (summary) summary.hidden = false;
+  if (studentTabs) studentTabs.hidden = true;
+  if (teacherTabs) {
+    teacherTabs.hidden = false;
+    teacherTabs.querySelectorAll('.assignment-tab').forEach(btn => {
+      const active = btn.dataset.assignmentTab === teacherAssignmentTab;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', String(active));
+    });
+  }
+
+  const rowsData = assignments.map(assignment => ({
+    assignment,
+    cls: findClass(assignment.class_id),
+    counts: teacherAssignmentCounts(assignment)
+  })).filter(entry => entry.cls);
+
+  const total = rowsData.length;
+  const needsGrading = rowsData.filter(entry => entry.counts.submitted > entry.counts.graded).length;
+  const dueThisWeek = rowsData.filter(entry => {
+    const days = daysUntil(entry.assignment.deadline);
+    return days >= 0 && days <= 7;
+  }).length;
+  const expectedTotal = rowsData.reduce((sum, entry) => sum + entry.counts.expected, 0);
+  const submittedTotal = rowsData.reduce((sum, entry) => sum + entry.counts.submitted, 0);
+  const rate = expectedTotal > 0 ? Math.round((submittedTotal / expectedTotal) * 100) : 0;
+
+  const totalEl = document.getElementById('teacher-total-assignments');
+  const needsEl = document.getElementById('teacher-needs-grading');
+  const weekEl = document.getElementById('teacher-due-this-week');
+  const rateEl = document.getElementById('teacher-submission-rate');
+  if (totalEl) totalEl.textContent = String(total);
+  if (needsEl) needsEl.textContent = String(needsGrading);
+  if (weekEl) weekEl.textContent = String(dueThisWeek);
+  if (rateEl) rateEl.textContent = rate + '%';
+
+  const shown = rowsData.filter(entry => teacherMatchesTab(entry.assignment, entry.counts, teacherAssignmentTab));
+
+  const list = document.getElementById('assignment-list');
+  if (!list) return;
+
+  if (shown.length === 0) {
+    const message = teacherAssignmentTab === 'all'
+      ? 'No assignments available.'
+      : 'No assignments in this tab.';
+    list.innerHTML = `<div class="empty-state"><p>${escapeHTML(message)}</p></div>`;
+    return;
+  }
+
+  const rows = shown.map(({ assignment, cls, counts }) => {
+    const deadline = teacherDeadlineLabel(assignment.deadline);
+    const statusKey = teacherAssignmentStatus(assignment, counts);
+    const status = TEACHER_STATUS[statusKey];
+    const percent = counts.expected > 0
+      ? Math.min(100, Math.round((counts.submitted / counts.expected) * 100))
+      : 0;
+    const points = (assignment.points === null || assignment.points === undefined)
+      ? '—'
+      : `${assignment.points} pts`;
+
+    return `
+      <tr class="assignment-row assignment-table__row" data-teacher-assignment="${assignment.id}">
+        <td class="assignment-cell assignment-cell--title" data-label="Assignment">
+          <span class="assignment-row__title">${escapeHTML(assignment.title)}</span>
+        </td>
+        <td class="assignment-cell" data-label="Class">${escapeHTML(cls.name)}</td>
+        <td class="assignment-cell" data-label="Deadline">
+          <span class="teacher-deadline">
+            <span class="teacher-deadline__date">${escapeHTML(formatDeadline(assignment.deadline))}</span>
+            <span class="teacher-deadline__hint${deadline.closed ? ' is-closed' : ''}">${escapeHTML(deadline.label)}</span>
+          </span>
+        </td>
+        <td class="assignment-cell" data-label="Points">${escapeHTML(points)}</td>
+        <td class="assignment-cell" data-label="Submissions">
+          <span class="teacher-progress">
+            <span class="teacher-progress__track">
+              <span class="teacher-progress__fill" style="width:${percent}%"></span>
+            </span>
+            <span class="teacher-progress__label">${counts.submitted}/${counts.expected} submitted</span>
+          </span>
+        </td>
+        <td class="assignment-cell" data-label="Graded">${counts.graded}/${counts.submitted} graded</td>
+        <td class="assignment-cell" data-label="Status">
+          <span class="status ${status.className}">${status.label}</span>
+        </td>
+        <td class="assignment-cell assignment-cell--action" data-label="Action">
+          <div class="assignment-row__actions">
+            <button type="button" class="btn btn--ghost btn--sm" data-teacher-assignment-edit="${assignment.id}">Edit</button>
+            <button type="button" class="btn btn--ghost btn--sm" data-teacher-review="${assignment.id}">Review submissions</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  list.innerHTML = `
+    <div class="assignment-table__scroll">
+      <table class="assignment-table">
+        <thead>
+          <tr>
+            <th>Assignment</th>
+            <th>Class</th>
+            <th>Deadline</th>
+            <th>Points</th>
+            <th>Submissions</th>
+            <th>Graded</th>
+            <th>Status</th>
+            <th class="assignment-table__th--action">Action</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function teacherSubmissionStatus(submission, deadline) {
+  if (!submission) return { key: 'missing', label: 'Missing', className: 'status--missing' };
+  const due = new Date(deadline + 'T23:59:59');
+  const submittedAt = new Date(submission.timestamp);
+  if (submittedAt > due) return { key: 'late', label: 'Late', className: 'status--due-soon' };
+  return { key: 'submitted', label: 'Submitted', className: 'status--submitted' };
+}
+
+function formatSubmittedTime(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+}
+
+function renderTeacherStudentRows(assignment, cls) {
+  const tbody = document.getElementById('ta-students');
+  if (!tbody) return;
+
+  const students = cls.studentIds
+    .map(id => findUser(id) || { id, name: 'Unknown student' })
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+
+  if (students.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="teacher-submissions__empty">No students in this class yet.</td></tr>`;
+    return;
+  }
+
+  const hasPoints = assignment.points !== null && assignment.points !== undefined;
+  const max = hasPoints ? assignment.points : '';
+
+  tbody.innerHTML = students.map(student => {
+    const submission = findSubmission(assignment.id, student.id);
+    const status = teacherSubmissionStatus(submission, assignment.deadline);
+    const feedback = submission ? getTeacherFeedback(submission.id) : '';
+    const score = submission && submission.score !== null && submission.score !== undefined
+      ? submission.score
+      : '';
+    const file = submission && submission.filePath
+      ? `<button type="button" class="teacher-file-link" data-open-submission="${submission.id}">${escapeHTML(submission.filename)}</button>`
+      : (submission ? '<span class="teacher-submissions__missing">No file</span>' : '—');
+    const scoreInput = submission
+      ? `<input type="number" class="grade__input teacher-score-input" min="0" step="1" inputmode="numeric"
+               data-teacher-score="${submission.id}" value="${score}"${hasPoints ? ` max="${max}"` : ''}
+               placeholder="—" aria-label="Score for ${escapeHTML(student.name)}">`
+      : `<input type="number" class="grade__input teacher-score-input" disabled placeholder="—"${hasPoints ? ` max="${max}"` : ''}
+               aria-label="Score for ${escapeHTML(student.name)}">`;
+    const feedbackInput = submission
+      ? `<textarea class="teacher-feedback-input" rows="2" data-teacher-feedback="${submission.id}"
+                   placeholder="Feedback for this student">${escapeHTML(feedback)}</textarea>`
+      : `<textarea class="teacher-feedback-input" rows="2" disabled
+                   placeholder="No submission yet"></textarea>`;
+    const action = submission
+      ? `<button type="button" class="btn btn--ghost btn--sm" data-teacher-save="${submission.id}">Save grade</button>`
+      : `<button type="button" class="btn btn--ghost btn--sm" data-teacher-remind="${student.id}">Send reminder</button>`;
+
+    return `
+      <tr>
+        <td class="teacher-submissions__student">${escapeHTML(student.name)}</td>
+        <td><span class="status ${status.className}">${status.label}</span></td>
+        <td class="teacher-submissions__time">${escapeHTML(formatSubmittedTime(submission && submission.timestamp))}</td>
+        <td class="teacher-submissions__file">${file}</td>
+        <td class="teacher-submissions__score">
+          ${scoreInput}${hasPoints ? `<span class="grade__max">/ ${escapeHTML(String(max))}</span>` : ''}
+        </td>
+        <td class="teacher-submissions__feedback">${feedbackInput}</td>
+        <td class="teacher-submissions__action">${action}</td>
+      </tr>`;
+  }).join('');
+}
+
+function openTeacherAssignment(assignmentId) {
+  ensureTeacherAssignmentsUI();
+  const assignment = db.assignments.find(a => a.id === assignmentId);
+  if (!assignment) return;
+  const cls = findClass(assignment.class_id);
+  if (!cls) return;
+
+  teacherAssignmentId = assignmentId;
+  const title = document.getElementById('ta-title');
+  const meta = document.getElementById('ta-meta');
+  const instructions = document.getElementById('ta-instructions');
+  if (title) title.textContent = assignment.title;
+  if (meta) {
+    meta.textContent = `${cls.name} · Due ${formatDeadline(assignment.deadline)}${assignment.points ? ' · ' + assignment.points + ' pts' : ''}`;
+  }
+  if (instructions) instructions.textContent = assignment.instructions || '';
+
+  renderTeacherStudentRows(assignment, cls);
+  openModal('modal-teacher-assignment');
+}
+
+async function saveTeacherGrade(submissionId, btn) {
+  const input = document.querySelector(`[data-teacher-score="${submissionId}"]`);
+  const feedback = document.querySelector(`[data-teacher-feedback="${submissionId}"]`);
+  const assignment = db.assignments.find(a => a.id === teacherAssignmentId);
+  const raw = input ? input.value.trim() : '';
+  let value = null;
+
+  if (raw !== '') {
+    value = Number(raw);
+    if (!Number.isInteger(value) || value < 0) {
+      showToast('Enter a whole number (0 or more) as the score.', 'error');
+      return;
+    }
+    if (assignment && assignment.points !== null && assignment.points !== undefined && value > assignment.points) {
+      showToast(`The maximum score for this assignment is ${assignment.points}.`, 'error');
+      return;
+    }
+  }
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  const { error } = await sb.from('submissions').update({ score: value }).eq('id', submissionId);
+  btn.disabled = false;
+  btn.textContent = label;
+
+  if (error) {
+    showToast('Could not save the grade: ' + error.message, 'error');
+    return;
+  }
+
+  const submission = db.submissions.find(s => s.id === submissionId);
+  if (submission) submission.score = value;
+  if (feedback) setTeacherFeedback(submissionId, feedback.value);
+
+  renderTeacherAssignments();
+  showToast('Grade saved.');
+}
+
+function sendTeacherReminder(studentId, btn) {
+  const assignment = db.assignments.find(a => a.id === teacherAssignmentId);
+  const student = findUser(studentId);
+  if (!assignment) return;
+
+  safeLocal.set(
+    `socialearn:reminder:${assignment.id}:${studentId}`,
+    new Date().toISOString()
+  );
+  btn.disabled = true;
+  btn.textContent = 'Reminder sent';
+  showToast(`Reminder sent to ${student ? student.name : 'the student'}.`);
 }
 
 setAuthMode('signin');

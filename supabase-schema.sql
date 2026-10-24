@@ -90,12 +90,13 @@ create table profiles (
 create index on profiles (role);
 
 create table classes (
-  id         uuid primary key default gen_random_uuid(),
-  name       text not null,
-  section    text not null,
-  code       text not null unique,
-  teacher_id uuid not null references profiles(id) on delete cascade,
-  created_at timestamptz not null default now()
+  id             uuid primary key default gen_random_uuid(),
+  name           text not null,
+  section        text not null,
+  code           text not null unique,
+  teacher_id     uuid not null references profiles(id) on delete cascade,
+  background_url text not null default '',
+  created_at     timestamptz not null default now()
 );
 create index on classes (teacher_id);
 create index on classes (code);
@@ -608,9 +609,12 @@ create policy "members read class_members"
 -- happens through the join_class() RPC below, which checks the
 -- class code server-side. Without this policy a signed-in user
 -- could add themselves to any class by guessing its UUID.
--- Only the teacher of a class can remove a student.
+-- Teachers can remove any student in their class; students can leave
+-- their own enrolment.
 create policy "teachers manage enrolment"
   on class_members for delete to authenticated using (is_class_teacher(class_id));
+create policy "students leave classes"
+  on class_members for delete to authenticated using (student_id = auth.uid());
 
 create policy "members read posts"
   on posts for select to authenticated using (is_class_member(class_id));
@@ -1008,7 +1012,46 @@ create policy "users delete own avatar"
 
 
 -- -------------------------------------------------------------
--- 7c. Storage — chat attachments (photos and videos)
+-- 7c. Storage — class background images
+--    A public "class-backgrounds" bucket holding <uid>/<unique>-<name>.
+--    The bucket is public so every class member can render the card from
+--    its public URL; writes stay locked to the teacher's own folder.
+-- -------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('class-backgrounds', 'class-backgrounds', true, 5242880) -- 5 MB per image
+on conflict (id) do update set public         = excluded.public,
+                                file_size_limit = excluded.file_size_limit;
+
+drop policy if exists "teachers upload class backgrounds" on storage.objects;
+create policy "teachers upload class backgrounds"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'class-backgrounds'
+    and is_teacher()
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "teachers update class backgrounds" on storage.objects;
+create policy "teachers update class backgrounds"
+  on storage.objects for update to authenticated
+  using (
+    bucket_id = 'class-backgrounds'
+    and is_teacher()
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "teachers delete class backgrounds" on storage.objects;
+create policy "teachers delete class backgrounds"
+  on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'class-backgrounds'
+    and is_teacher()
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+
+-- -------------------------------------------------------------
+-- 7d. Storage — chat attachments (photos and videos)
 --    A private bucket laid out as
 --    <conversationId>/<senderId>/<unique>-<filename>. The path is
 --    the whole rule: only the sender writes into their own folder
